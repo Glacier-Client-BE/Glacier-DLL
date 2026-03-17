@@ -1,5 +1,6 @@
 #pragma once
 #include "../ModuleBase.h"
+#include <chrono>
 class HitColor : public ModuleBase {
 public:
     HitColor();

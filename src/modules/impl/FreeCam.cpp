@@ -1,5 +1,6 @@
 #include "FreeCam.h"
 #include "../../sdk/ClientInstance.h"
+#include "../../utils/Logger.h" // Added: This fixes the C2653 error
 #include <IconsFontAwesome5.h>
 #include <cmath>
 
@@ -12,8 +13,8 @@ FreeCam::FreeCam()
 }
 
 void FreeCam::onEnable() {
-    // Refuse to activate on multiplayer servers
-    if (ClientInstance::get().isOnServer()) {
+    // Fixed: Changed . to -> because get() returns a pointer (ClientInstance*)
+    if (ClientInstance::get()->isOnServer()) { 
         Logger::warn("Free Cam is disabled on multiplayer servers.");
         setEnabled(false);
         return;
@@ -42,8 +43,8 @@ void FreeCam::onDisable() {
 }
 
 void FreeCam::onTick() {
-    // Safety check: disable immediately if a server connection is detected mid-session
-    if (ClientInstance::get().isOnServer()) {
+    // Fixed: Changed . to -> for the pointer return type
+    if (ClientInstance::get()->isOnServer()) {
         setEnabled(false);
         return;
     }
@@ -83,11 +84,14 @@ void FreeCam::onTick() {
     fc.cameraPos.y += dy;
     fc.cameraPos.z += dz;
 
-    // Freeze real player in place (no movement packets sent to server)
+    // Freeze real player in place
     float* vx = reinterpret_cast<float*>(reinterpret_cast<uintptr_t>(lp) + 0x110);
     float* vy = reinterpret_cast<float*>(reinterpret_cast<uintptr_t>(lp) + 0x114);
     float* vz = reinterpret_cast<float*>(reinterpret_cast<uintptr_t>(lp) + 0x118);
-    *vx = 0.f; *vy = 0.f; *vz = 0.f;
+    
+    if (vx && vy && vz) {
+        *vx = 0.f; *vy = 0.f; *vz = 0.f;
+    }
 
     (void)pitch;
 }
