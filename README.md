@@ -1,79 +1,141 @@
-# Glacier Client v1.0.0
+# Glacier Client v2.0.0
 
-A Minecraft Bedrock Edition external client built with C++20, ImGui (DX11) and MinHook.
+A Minecraft Bedrock Edition (MCBE) DLL client — DirectX 11 + Dear ImGui.
 
-## Requirements
-- Windows 10/11 x64
-- Visual Studio 2022 (MSVC v143, C++20)
-- CMake 3.20+
-- Git (for FetchContent)
+---
+
+## What's new in v2.0.0
+
+### Redesigned Mod Menu (matches screenshot)
+
+The old sidebar-list layout is replaced by a **3-column icon-card grid** with four tabs:
+
+| Tab | Purpose |
+|---|---|
+| **Modules** | Icon grid with category pills + live search |
+| **Elements** | List of HUD modules — toggle + see current position |
+| **Editors** | Keybind reference table |
+| **Information** | Client info, menu keybind remapper, statistics |
+
+Each card shows:
+- Large centered FontAwesome icon (blurple accent when enabled)
+- Green indicator dot when active, glow border on top edge
+- **ⓘ** button opens a description panel on the right
+- **⚙** button opens the settings panel (sliders / toggles)
+
+### ModuleSettings — `defineString` / `getString` added
+
+All modules that need string settings (NickHider, AutoGG, Waypoints) now use the type-safe `defineString` / `getString` API.
+
+---
+
+## Full module list (34)
+
+### HUD (15)
+| Module | Notes |
+|---|---|
+| FPS Counter | EMA-smoothed, configurable sample window |
+| Keystrokes | WASD + LMB/RMB with press animations |
+| CPS Counter | Per-button bars with configurable max scale |
+| Armor HUD | Slot icons + durability bars, drag to reposition |
+| Coordinates HUD | XYZ / biome / dimension |
+| Speed HUD | m/s speedometer |
+| Active Mods List | On-screen enabled-module list |
+| **Clock & Compass** | Combined real clock + animated compass — replaces old Clock |
+| Ping Display | Latency in ms |
+| Reach Display | Last recorded attack reach |
+| Click Stats Dashboard | Session click analytics |
+| Inventory Viewer | Hotbar slot contents |
+| Session Info | Play-time + K/D |
+| **Potion HUD** *(new — from Onix)* | Active effects + duration |
+| **Chunk Map** *(new — from Onix)* | Chunk coordinate grid widget |
+
+### Combat (4)
+| Module | Notes |
+|---|---|
+| Combo Counter | Hit streak with fade-out |
+| Target HUD | Animated health bar + distance + armor |
+| Kill Counter | Session tracker |
+| Hit Color | Custom entity hurt-flash tint |
+
+### Movement (3)
+| Module | Notes |
+|---|---|
+| Toggle Sprint | Keeps sprint while pressing W |
+| Safe Walk | Edge-detection auto-sneak |
+| **Toggle Sneak** *(new — from Onix)* | Persist sneak without holding key |
+
+### Visual (10)
+| Module | Notes |
+|---|---|
+| FullBright | Max gamma override |
+| HurtCam Disable | Remove screen shake on damage |
+| FreeCam | Detached spectator camera |
+| Chunk Borders | 16×16 chunk edge lines |
+| Crosshair | Fully custom crosshair renderer |
+| Health Indicator | Color-coded health bar |
+| **Block Outline** *(new — from Onix)* | Custom outline/overlay color + width |
+| **Hitboxes** *(new — from Onix)* | Entity AABB wireframe ESP |
+| **Free Look** *(new — from Onix)* | Hold-key orbit camera, smooth return |
+| **Environment Changer** *(new — from Onix)* | Gamma/time/rain override |
+
+### Utility (7)
+| Module | Notes |
+|---|---|
+| Auto Respawn | Instant respawn on death |
+| Zoom | FOV zoom on keyhold |
+| Timer | Tick-speed multiplier |
+| Notification System | On-screen toast messages |
+| Packet Logger | Debug packet inspector |
+| **Auto GG** *(new — from Onix)* | Auto-send GG/GL with configurable messages |
+| **Nick Hider** *(new — from Onix)* | Override displayed username |
+| **Waypoints** *(new — from Onix)* | Named world markers + edge arrows |
+
+---
 
 ## Build
+
+Requires **Visual Studio 2022**, **CMake ≥ 3.20**, Windows SDK, x64.
 
 ```bat
 cmake -B build -A x64
 cmake --build build --config Release
 ```
 
-Output: `build/Release/glacier.dll`  
-Font:   `build/Release/fa-solid-900.ttf`  ← must live next to the DLL.
+Output → `build/Release/glacier.dll`
 
-## Inject
-Use any standard DLL injector (e.g. Process Hacker, Xenos) targeting `Minecraft.Windows.exe`.
+Inject into `Minecraft.Windows.exe` with any x64 injector. Default menu key: **INSERT**.
 
-## Default keybinds
-| Key | Action |
-|-----|--------|
-| `M` | Open / close mod menu |
-| `END` | Unload client |
-| `C` (hold) | Zoom |
-
-All per-module hotkeys are assignable in the **Client → Menu Keybind** tab.
-
-## Module list (42 modules)
-
-### HUD
-FPS Counter · Keystrokes · CPS Counter · Armor HUD · Coordinates · Speed HUD ·
-Active Mods List · Clock · Ping Display · Reach Display · Click Stats ·
-Inventory Viewer · Session Info
-
-### Combat
-Combo Counter · Target HUD · Kill Counter · Hit Color · Criticals
-
-### Movement
-Safe Walk · Auto Sprint · No Fall · Velocity · High Jump · Step Height · Scaffold
-
-### Visual
-Full Bright · Anti Blind · No Hurt Cam · Tracers · ESP Boxes · Item ESP ·
-Block ESP · Free Cam · Chunk Borders · Name Tags · Crosshair · Health Indicator
-
-### Utility
-Auto Respawn · Anti AFK · Auto Tool · Zoom · Timer · Water Breath ·
-Notification System · Packet Logger
-
-## SDK notes
-Offsets are for Bedrock v26.x. After a game update, re-scan with IDA/Ghidra and update
-`src/sdk/ClientInstance.h`. The sig-scan patterns in `Client.cpp → resolveSDKPointers()`
-will automatically re-resolve the pointer addresses at runtime.
+---
 
 ## Architecture
+
 ```
-dllmain.cpp         — DLL entry, spins up Client on a new thread
-Client.cpp          — init: sig-scan → ModuleManager → SwapChainHook
-hooks/
-  SwapChainHook     — IDXGISwapChain::Present vtable hook; drives the render loop
-  HookManager       — MinHook wrapper
-render/
-  Renderer          — ImGui DX11 init, beginFrame/endFrame
-  ModMenu           — full mod menu UI (sidebar, module cards, settings panel)
-modules/
-  ModuleBase        — base class with toggle, hotkey poll, settings
-  ModuleManager     — owns all modules; dispatches tick/render
-  impl/             — one .h/.cpp pair per module
-sdk/
-  ClientInstance.h  — all SDK structs, helpers, tracker singletons
-utils/
-  SigScanner        — .text section pattern scanner + RIP resolver
-  Logger            — thread-safe timestamped file + DebugView logger
-  ClientConfig      — runtime config (menu key, DLL directory)
+src/
+├── dllmain.cpp              DLL entry point
+├── Client.cpp/h             Init + main loop
+├── sdk/ClientInstance.h     MCBE SDK — RE'd offsets for v26.x
+├── hooks/
+│   ├── HookManager          MinHook wrapper
+│   └── SwapChainHook        IDXGISwapChain::Present → ImGui frame
+├── modules/
+│   ├── ModuleBase.h         Base class (name, icon, category, key, settings)
+│   ├── ModuleSettings       Typed setting store: bool/int/float/string
+│   ├── ModuleManager        Register + dispatch tick/render
+│   └── impl/                34 module implementations
+├── render/
+│   ├── ModMenu.cpp/h        Grid UI — Modules / Elements / Editors / Info
+│   └── Renderer.cpp/h       ImGui + DX11 atlas init
+└── utils/
+    ├── ClientConfig.h       Persistent JSON config
+    ├── Logger.cpp/h         fmt-style logger
+    └── SigScanner.cpp/h     AOB pattern scanner
 ```
+
+---
+
+## Credits
+- Dear ImGui — ocornut
+- MinHook — TsudaKageyu
+- Font Awesome 5 — fontawesome.com
+- Module concepts from Onix Client V2 (open-source)

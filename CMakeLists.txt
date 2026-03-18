@@ -13,7 +13,7 @@ endif()
 
 include(FetchContent)
 
-# ── MinHook ───────────────────────────────────────────────────────────────────
+# ── MinHook ────────────────────────────────────────────────────────────────────
 FetchContent_Declare(
     minhook
     GIT_REPOSITORY https://github.com/TsudaKageyu/minhook.git
@@ -21,7 +21,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(minhook)
 
-# ── ImGui ─────────────────────────────────────────────────────────────────────
+# ── ImGui ──────────────────────────────────────────────────────────────────────
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
@@ -38,7 +38,7 @@ set(IMGUI_SOURCES
     ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
 )
 
-# ── IconFontCppHeaders ────────────────────────────────────────────────────────
+# ── IconFontCppHeaders ─────────────────────────────────────────────────────────
 FetchContent_Declare(
     iconfontcppheaders
     GIT_REPOSITORY https://github.com/juliettef/IconFontCppHeaders.git
@@ -46,7 +46,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(iconfontcppheaders)
 
-# ── Font Awesome 5 Free Solid TTF ─────────────────────────────────────────────
+# ── Font Awesome 5 Free Solid TTF ──────────────────────────────────────────────
 file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/fonts")
 set(FA_TTF "${CMAKE_SOURCE_DIR}/fonts/fa-solid-900.ttf")
 
@@ -66,7 +66,7 @@ if(NOT EXISTS "${FA_TTF}")
     endif()
 endif()
 
-# ── Collect all client sources ────────────────────────────────────────────────
+# ── Collect all client sources (GLOB_RECURSE handles all new modules) ──────────
 file(GLOB_RECURSE CLIENT_SOURCES "src/*.cpp")
 
 add_library(GlacierClient SHARED
@@ -95,12 +95,11 @@ target_compile_definitions(GlacierClient PRIVATE
     UNICODE
     _UNICODE
     _CRT_SECURE_NO_WARNINGS
-    GLACIER_VERSION="1.0.0"
+    GLACIER_VERSION="2.0.0"
 )
 
 target_compile_options(GlacierClient PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W3 /MP /permissive->
-    # Suppress known-noisy warnings from SDK offset code
     $<$<CXX_COMPILER_ID:MSVC>:/wd4100 /wd4189>
 )
 
@@ -119,10 +118,9 @@ if(EXISTS "${FA_TTF}")
     )
 endif()
 
-# ── Build instructions (printed once) ─────────────────────────────────────────
 message(STATUS "
   ┌─────────────────────────────────────────┐
-  │  Glacier Client  ${GLACIER_VERSION}                    │
+  │  Glacier Client v2.0.0                  │
   │  Build with Visual Studio 2022 x64:     │
   │    cmake -B build -A x64                │
   │    cmake --build build --config Release │
