@@ -12,7 +12,7 @@ static constexpr EffectInfo kEffects[] = {
     {  3, ICON_FA_HAMMER,      "Haste",        IM_COL32(210, 170,  50, 255) },
     {  4, ICON_FA_FIST_RAISED, "Mining Fatigue", IM_COL32(74, 66, 133, 255) },
     {  5, ICON_FA_FIST_RAISED, "Strength",     IM_COL32(147,  36,  35, 255) },
-    {  8, ICON_FA_JUMP,        "Jump Boost",   IM_COL32(34, 210,  98, 255) },
+    {  8, ICON_FA_ARROW_UP,        "Jump Boost",   IM_COL32(34, 210,  98, 255) },
     {  9, ICON_FA_DIZZY,       "Nausea",       IM_COL32(85, 115, 72, 255)  },
     { 10, ICON_FA_HEART,       "Regen",        IM_COL32(205,  92, 171, 255) },
     { 11, ICON_FA_SHIELD_ALT,  "Resistance",   IM_COL32(101, 52, 52, 255)  },
