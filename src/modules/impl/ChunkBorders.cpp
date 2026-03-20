@@ -5,7 +5,7 @@
 #include <cmath>
 
 ChunkBorders::ChunkBorders()
-    : ModuleBase("Chunk Borders","Renders chunk boundary lines",ICON_FA_TH,ModuleCategory::Visual)
+    : ModuleBase("Chunk Borders","Renders chunk boundary lines","chunkborders",ModuleCategory::Visual)
 {
     m_settings.defineFloat("r",    "Color R",   114.f, 0.f, 255.f);
     m_settings.defineFloat("g",    "Color G",   137.f, 0.f, 255.f);

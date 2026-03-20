@@ -5,7 +5,7 @@
 
 EnvironmentChanger::EnvironmentChanger()
     : ModuleBase("Env Changer", "Override time-of-day, fog color, and weather visuals",
-                 ICON_FA_CLOUD_SUN, ModuleCategory::Visual)
+                 "environmentchanger", ModuleCategory::Visual)
 {
     m_settings.defineBool ("changeTime",  "Override Time",       true);
     m_settings.defineBool ("useRealTime", "Use Real-World Time", false);

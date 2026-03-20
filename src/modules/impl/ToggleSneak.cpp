@@ -4,7 +4,7 @@
 
 ToggleSneak::ToggleSneak()
     : ModuleBase("Toggle Sneak", "Sneak without holding the sneak key",
-                 ICON_FA_ANGLE_DOUBLE_DOWN, ModuleCategory::Movement)
+                 "togglesneak", ModuleCategory::Movement)
 {
     m_settings.defineBool("persistent", "Keep After Disable", false);
 }

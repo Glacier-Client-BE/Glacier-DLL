@@ -4,7 +4,7 @@
 
 AutoGG::AutoGG()
     : ModuleBase("Auto GG", "Automatically sends a GG message at the end of a game",
-                 ICON_FA_TROPHY, ModuleCategory::Utility)
+                 "autogg", ModuleCategory::Utility)
 {
     m_settings.defineString("message",  "GG Message", "gg");
     m_settings.defineString("glMessage","GL Message",  "gl hf");

@@ -5,7 +5,7 @@
 
 FreeLook::FreeLook()
     : ModuleBase("Free Look", "Hold a key to orbit the camera without turning your character",
-                 ICON_FA_VIDEO, ModuleCategory::Visual)
+                 "freelook", ModuleCategory::Visual)
 {
     m_settings.defineInt ("holdKey",      "Hold Key (VK)",  18,    0x08, 0xFE); // ALT
     m_settings.defineBool("smoothReturn", "Smooth Return",  true);

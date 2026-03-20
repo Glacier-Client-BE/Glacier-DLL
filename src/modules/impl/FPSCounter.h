@@ -2,16 +2,15 @@
 #include "../ModuleBase.h"
 #include <chrono>
 #include <deque>
-
 class FPSCounter : public ModuleBase {
 public:
     FPSCounter();
-    void onEnable() override;
-    void onDisable() override;
+    void onEnable() override; void onDisable() override;
     void onRender(ImDrawList* dl) override;
+    void onRenderImGui() override;
 private:
     using Clock = std::chrono::high_resolution_clock;
-    float m_fps = 0.f;
+    float m_fps=0.f, m_slow=0.f;
     Clock::time_point m_last;
-    std::deque<float> m_samples;
+    std::deque<float> m_graph;
 };

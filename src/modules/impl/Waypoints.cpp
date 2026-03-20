@@ -10,7 +10,7 @@ static constexpr float kPi = 3.14159265f;
 
 Waypoints::Waypoints()
     : ModuleBase("Waypoints", "Marks world positions with colored labels visible through terrain",
-                 ICON_FA_MAP_MARKER_ALT, ModuleCategory::Utility)
+                 "waypoints", ModuleCategory::Utility)
 {
     m_settings.defineBool ("showDist",   "Show Distance",    true);
     m_settings.defineBool ("showArrow",  "Show Arrow",       true);

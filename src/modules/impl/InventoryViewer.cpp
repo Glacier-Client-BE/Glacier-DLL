@@ -1,118 +1,72 @@
 #include "InventoryViewer.h"
 #include "../../sdk/ClientInstance.h"
-#include <IconsFontAwesome5.h>
+#include "../../render/HUDStyle.h"
 #include <imgui.h>
 #include <cstdio>
 
 InventoryViewer::InventoryViewer()
-    : ModuleBase("Inventory Viewer","Shows your inventory in a floating panel",
-                 ICON_FA_ARCHIVE, ModuleCategory::HUD, 200.f, 10.f)
+    : ModuleBase("Inventory","Floating inventory with durability bars",
+                 "inventoryviewer", ModuleCategory::HUD, 200.f, 10.f)
 {
     m_settings.defineFloat("scale",    "Scale",          1.f,  0.5f, 2.f);
-    m_settings.defineFloat("bgAlpha",  "BG Alpha",       0.88f, 0.f, 1.f);
-    m_settings.defineBool ("showHeld", "Highlight Held", true);
-    m_settings.defineBool ("showDur",  "Show Durability",true);
-    m_settings.defineBool ("showNames","Show Item Names", false);
+    m_settings.defineBool ("showHeld", "Highlight Held",  true);
+    m_settings.defineBool ("showDur",  "Durability Bars",  true);
+    m_settings.defineBool ("showCount","Item Count",        true);
+    m_settings.defineBool ("showArmor","Armor Row",         true);
+    m_settings.defineBool ("compact",  "Hotbar Only",       false);
 }
-
 void InventoryViewer::onRenderImGui() {
-    float sc    = m_settings.getFloat("scale");
-    float alpha = m_settings.getFloat("bgAlpha");
-    bool  showDur  = m_settings.getBool("showDur");
-    bool  showNames= m_settings.getBool("showNames");
-    bool  hilite   = m_settings.getBool("showHeld");
-
-    // 9 hotbar + 27 inventory = 36 slots, displayed as 4 rows of 9
-    const int cols = 9, rows = 4;
-    float cell = 28.f * sc;
-    float pad  = 6.f  * sc;
-    float panW = cols * cell + pad * 2.f;
-    float panH = rows * cell + pad * 2.f + (showNames ? 14.f*sc : 0.f);
-
-    ImGui::SetNextWindowPos(m_pos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize({panW, panH});
-    ImGui::SetNextWindowBgAlpha(alpha);
-    ImGuiWindowFlags f = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
-        | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBringToFrontOnFocus
-        | ImGuiWindowFlags_NoSavedSettings;
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.137f,0.153f,0.165f,alpha));
-    ImGui::PushStyleColor(ImGuiCol_Border,   ImVec4(0.447f,0.537f,0.855f,0.4f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {pad, pad});
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.f*sc);
-
-    if (ImGui::Begin("##inv", nullptr, f)) {
-        if (ImGui::IsWindowHovered() && ImGui::IsMouseDragging(0)) {
-            auto d = ImGui::GetIO().MouseDelta; m_pos.x += d.x; m_pos.y += d.y;
-        }
-        ImDrawList* dl  = ImGui::GetWindowDrawList();
-        ImVec2      base= ImGui::GetWindowPos();
-        base.x += pad; base.y += pad;
-
-        auto* lp       = getLocalPlayer();
-        int   heldSlot = lp ? lp->getSelectedSlot() : -1;
-
-        for (int row = 0; row < rows; row++) {
-            for (int col = 0; col < cols; col++) {
-                // Row 0 = hotbar (slots 0-8), rows 1-3 = main inventory (9-35)
-                int slot = (row == 0) ? col : (row * 9 + col);
-
-                ItemStack item;
-                if (lp) {
-                    if (slot < 9)       item = lp->getInventoryItem(slot);
-                    else {
-                        // Armor in first row override: use last 4 slots of row0 as armor preview
-                        item = lp->getInventoryItem(slot);
-                    }
+    float sc=m_settings.getFloat("scale");
+    bool  hl=m_settings.getBool("showHeld"),sd=m_settings.getBool("showDur"),
+          sc2=m_settings.getBool("showCount"),sa=m_settings.getBool("showArmor"),
+          cmp=m_settings.getBool("compact");
+    const int cols=9; int rows=cmp?1:4; int armR=sa&&!cmp?1:0;
+    float cell=26.f*sc, gap=2.f*sc, pad=8.f*sc;
+    float panW=cols*(cell+gap)-gap+pad*2;
+    float panH=(rows+armR)*(cell+gap)-gap+pad*2;
+    ImGui::SetNextWindowPos(m_pos,ImGuiCond_Always);
+    ImGui::SetNextWindowSize({panW,panH});
+    HUDStyle::push();
+    if (ImGui::Begin("##inv",nullptr,HUDStyle::WIN_FLAGS)) {
+        HUDStyle::drag(m_pos);
+        ImDrawList* dl=ImGui::GetWindowDrawList();
+        ImVec2 base=ImGui::GetWindowPos(); base.x+=pad; base.y+=pad;
+        auto* lp=getLocalPlayer();
+        int held=lp?lp->getSelectedSlot():-1;
+        auto drawSlot=[&](int slot,float cx,float cy,bool hotbar,int hcol){
+            ItemStack it=lp?lp->getInventoryItem(slot):ItemStack{};
+            ImVec2 tl{cx,cy},br{cx+cell,cy+cell};
+            bool isHeld=hl&&hotbar&&hcol==held;
+            ImU32 bg=isHeld?IM_COL32(114,137,218,55):IM_COL32(30,30,30,210);
+            ImU32 bd=isHeld?HUDStyle::ACCENT:IM_COL32(55,60,68,160);
+            dl->AddRectFilled(tl,br,bg,4.f);
+            dl->AddRect(tl,br,bd,4.f,0,1.f);
+            if (it.isValid()) {
+                if (sc2&&it.count>1){ char c[8]; snprintf(c,sizeof(c),"%d",it.count);
+                    ImVec2 ts=ImGui::CalcTextSize(c); float fss=9.f*sc;
+                    dl->AddText(nullptr,fss,{br.x-ts.x*fss/ImGui::GetFontSize()-1.f,br.y-fss-1.f},HUDStyle::WHITE,c); }
+                if (sd&&it.hasDurability()){
+                    float r=it.getDurabilityPct();
+                    ImU32 dc=r>0.6f?HUDStyle::GREEN:r>0.3f?HUDStyle::YELLOW:HUDStyle::RED;
+                    HUDStyle::bar(dl,tl.x,br.y-3.f*sc,cell,2.5f*sc,r,dc,1.f);
                 }
-
-                float cx = base.x + col * cell;
-                float cy = base.y + row * cell;
-                ImVec2 tl{cx, cy}, br{cx+cell-2, cy+cell-2};
-
-                // Cell background
-                bool isHeld = (hilite && row == 0 && col == heldSlot);
-                ImU32 cellBg = isHeld
-                    ? IM_COL32(114,137,218,60)
-                    : IM_COL32(44,47,51,200);
-                ImU32 cellBorder = isHeld
-                    ? IM_COL32(114,137,218,180)
-                    : IM_COL32(60,65,72,180);
-
-                dl->AddRectFilled(tl, br, cellBg, 3.f);
-                dl->AddRect(tl, br, cellBorder, 3.f, 0, 1.f);
-
-                if (item.isValid()) {
-                    // Item count badge
-                    if (item.count > 1) {
-                        char cnt[8]; snprintf(cnt, sizeof(cnt), "%d", item.count);
-                        ImVec2 ts = ImGui::CalcTextSize(cnt);
-                        dl->AddText(nullptr, 9.f*sc,
-                                    {br.x - ts.x - 1.f, br.y - 10.f*sc},
-                                    IM_COL32(255,255,255,255), cnt);
-                    }
-
-                    // Durability bar
-                    if (showDur && item.hasDurability()) {
-                        float ratio = item.getDurabilityPct();
-                        ImU32 dc = ratio > 0.6f ? IM_COL32(72,199,142,220)
-                                 : ratio > 0.3f ? IM_COL32(255,189,51,220)
-                                                : IM_COL32(237,70,70,220);
-                        float bw = cell - 4.f;
-                        dl->AddRectFilled({tl.x+1, br.y-4.f}, {tl.x+1+bw,     br.y-1.f}, IM_COL32(30,30,30,200), 1.f);
-                        dl->AddRectFilled({tl.x+1, br.y-4.f}, {tl.x+1+bw*ratio,br.y-1.f}, dc, 1.f);
-                    }
-
-                    // Item name label (abbreviated to fit cell)
-                    if (showNames && !item.name.empty()) {
-                        std::string abbr = item.name.substr(0, 3);
-                        dl->AddText(nullptr, 8.f*sc, {tl.x+2, tl.y+2},
-                                    IM_COL32(200,200,200,180), abbr.c_str());
-                    }
-                }
+            }
+        };
+        for (int c=0;c<cols;c++) drawSlot(c,base.x+c*(cell+gap),base.y,true,c);
+        if (!cmp) {
+            for (int r=1;r<rows;r++) for (int c=0;c<cols;c++)
+                drawSlot(9+(r-1)*9+c,base.x+c*(cell+gap),base.y+r*(cell+gap),false,-1);
+            if (armR) for (int i=0;i<4;i++){
+                float cx=base.x+i*(cell+gap), cy=base.y+rows*(cell+gap);
+                ItemStack arm=lp?lp->getArmorItem(i):ItemStack{};
+                ImVec2 tl{cx,cy},br{cx+cell,cy+cell};
+                ImU32 bd=arm.isValid()?HUDStyle::ACCENT:IM_COL32(55,60,68,140);
+                dl->AddRectFilled(tl,br,IM_COL32(30,30,30,210),4.f);
+                dl->AddRect(tl,br,bd,4.f,0,1.f);
+                if (sd&&arm.isValid()&&arm.hasDurability())
+                    HUDStyle::bar(dl,tl.x,br.y-3.f*sc,cell,2.5f*sc,arm.getDurabilityPct(),HUDStyle::ACCENT,1.f);
             }
         }
     }
-    ImGui::End();
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(2);
+    ImGui::End(); HUDStyle::pop();
 }

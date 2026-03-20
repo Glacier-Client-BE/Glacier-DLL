@@ -4,7 +4,7 @@
 #include <Windows.h>
 #include <cstdio>
 Clock::Clock()
-    : ModuleBase("Clock","Displays local system time",ICON_FA_CLOCK,ModuleCategory::HUD,10.f,440.f)
+    : ModuleBase("Clock","Displays local system time","clock",ModuleCategory::HUD,10.f,440.f)
 {
     m_settings.defineBool ("show24h",  "24-Hour Format",   true);
     m_settings.defineBool ("showDate", "Show Date",        false);

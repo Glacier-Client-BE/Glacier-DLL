@@ -1,60 +1,77 @@
+// ─ ReachDisplay ──────────────────────────────────────────────────────────────
 #include "ReachDisplay.h"
 #include "../../sdk/ClientInstance.h"
-#include <IconsFontAwesome5.h>
+#include "../../render/HUDStyle.h"
 #include <imgui.h>
 #include <cstdio>
+#include <numeric>
+#include <algorithm>
 
 ReachDisplay::ReachDisplay()
-    : ModuleBase("Reach Display","Shows distance to last hit target",
-                 ICON_FA_RULER, ModuleCategory::Combat, 10.f, 540.f)
+    : ModuleBase("Reach", "Last attack reach with rolling average and threshold color",
+                 "reachdisplay", ModuleCategory::HUD, 10.f, 540.f)
 {
-    m_settings.defineFloat("fontSize",  "Font Size",      13.f, 8.f, 28.f);
-    m_settings.defineBool ("shadow",    "Shadow",          true);
-    m_settings.defineFloat("warnAt",    "Warn Color Above",3.0f, 1.f, 6.f);
-    m_settings.defineBool ("showIcon",  "Show Icon",       true);
-    m_settings.defineBool ("showNoData","Show Before Hit", true);
+    m_settings.defineFloat("warnAt",  "Warn Above",  3.0f, 1.f, 6.f);
+    m_settings.defineBool ("showAvg", "Show Avg",    true);
+    m_settings.defineBool ("showMax", "Show Max",    false);
+    m_settings.defineBool ("noData",  "Show Before Hit", true);
+    m_settings.defineInt  ("samples", "Avg Samples", 5,    2, 20);
+    m_settings.defineFloat("scale",   "Scale",       1.f,  0.5f, 2.f);
 }
-
+void ReachDisplay::onEnable()  { m_samples.clear(); }
+void ReachDisplay::onDisable() { m_samples.clear(); }
+void ReachDisplay::onTick() {
+    auto& rt = ReachTracker::get();
+    if (rt.hasData && rt.lastReach != m_lastRec) {
+        m_lastRec = rt.lastReach;
+        int ms = m_settings.getInt("samples");
+        m_samples.push_back(rt.lastReach);
+        while ((int)m_samples.size() > ms) m_samples.pop_front();
+    }
+}
 void ReachDisplay::onRenderImGui() {
     auto& rt = ReachTracker::get();
+    if (!rt.hasData && !m_settings.getBool("noData")) return;
 
-    if (!rt.hasData && !m_settings.getBool("showNoData")) return;
+    float reach  = rt.hasData ? rt.lastReach : 0.f;
+    float warn   = m_settings.getFloat("warnAt");
+    float sc     = m_settings.getFloat("scale");
+    ImU32 col    = !rt.hasData ? HUDStyle::GREY
+                 : reach<=warn ? HUDStyle::GREEN : HUDStyle::RED;
 
-    float reach = rt.hasData ? rt.lastReach : 0.f;
-    float warnAt = m_settings.getFloat("warnAt");
-    float fs   = m_settings.getFloat("fontSize");
-    bool  shad = m_settings.getBool("shadow");
+    float avg=0.f, maxR=0.f;
+    if (!m_samples.empty()) {
+        avg  = std::accumulate(m_samples.begin(),m_samples.end(),0.f)/(float)m_samples.size();
+        maxR = *std::max_element(m_samples.begin(),m_samples.end());
+    }
 
-    // Green when reach is normal (≤warnAt), red when suspiciously high
-    ImU32 col = (reach <= warnAt)
-        ? IM_COL32(72, 199, 142, 255)
-        : IM_COL32(237, 70, 70, 255);
-
-    char buf[48];
-    if (rt.hasData)
-        snprintf(buf, sizeof(buf), "%s%.2f blocks",
-                 m_settings.getBool("showIcon") ? ICON_FA_RULER " " : "", reach);
-    else
-        snprintf(buf, sizeof(buf), "%sNo hits yet",
-                 m_settings.getBool("showIcon") ? ICON_FA_RULER " " : "");
+    bool sA = m_settings.getBool("showAvg") && !m_samples.empty();
+    bool sM = m_settings.getBool("showMax") && !m_samples.empty();
+    float fs  = HUDStyle::FONT_BIG * sc;
+    float fss = HUDStyle::FONT_SMALL * sc;
+    float lh  = fss + 3.f;
+    float panW = 130.f * sc;
+    float panH = fs + (sA?lh:0.f) + (sM?lh:0.f) + HUDStyle::PAD_Y*2;
 
     ImGui::SetNextWindowPos(m_pos, ImGuiCond_Always);
-    ImGui::SetNextWindowBgAlpha(0.f);
-    ImGui::SetNextWindowSize({0,0});
-    ImGuiWindowFlags f = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
-        | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar
-        | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings;
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,   {2,2});
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
-    if (ImGui::Begin("##reach", nullptr, f)) {
-        if (ImGui::IsWindowHovered() && ImGui::IsMouseDragging(0)) {
-            auto d = ImGui::GetIO().MouseDelta; m_pos.x += d.x; m_pos.y += d.y;
-        }
+    ImGui::SetNextWindowSize({ panW, panH });
+    HUDStyle::push();
+    if (ImGui::Begin("##reach", nullptr, HUDStyle::WIN_FLAGS)) {
+        HUDStyle::drag(m_pos);
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 bp = ImGui::GetWindowPos();
-        if (shad) dl->AddText(nullptr, fs, {bp.x+1, bp.y+1}, IM_COL32(0,0,0,160), buf);
-        dl->AddText(nullptr, fs, bp, col, buf);
+        float bx = bp.x+HUDStyle::PAD_X, oy = HUDStyle::PAD_Y;
+        char buf[48];
+        if (rt.hasData) snprintf(buf,sizeof(buf),"%.3f blk",reach);
+        else            snprintf(buf,sizeof(buf),"No hits");
+        HUDStyle::text(dl,fs,{bx,bp.y+oy},col,buf);
+        oy += fs + 2.f;
+        if (sA) { snprintf(buf,sizeof(buf),"Avg %.3f",avg);
+            HUDStyle::text(dl,fss,{bx,bp.y+oy},HUDStyle::GREY,buf,false); oy+=lh; }
+        if (sM) { snprintf(buf,sizeof(buf),"Max %.3f",maxR);
+            ImU32 mc=maxR>warn?HUDStyle::RED:HUDStyle::YELLOW;
+            HUDStyle::text(dl,fss,{bx,bp.y+oy},mc,buf,false); }
     }
     ImGui::End();
-    ImGui::PopStyleVar(2);
+    HUDStyle::pop();
 }

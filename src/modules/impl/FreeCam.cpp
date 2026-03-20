@@ -5,7 +5,7 @@
 #include <cmath>
 
 FreeCam::FreeCam()
-    : ModuleBase("Free Cam", "Detaches camera from player (singleplayer only)", ICON_FA_VIDEO, ModuleCategory::Visual)
+    : ModuleBase("Free Cam", "Detaches camera from player (singleplayer only)", "freecam", ModuleCategory::Visual)
 {
     m_settings.defineFloat("speed",  "Camera Speed",     1.f, 0.1f, 5.f);
     m_settings.defineBool ("revert", "Revert on Disable", true);

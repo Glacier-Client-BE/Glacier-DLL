@@ -5,7 +5,7 @@
 
 Timer::Timer()
     : ModuleBase("Timer","Multiplies the game tick speed",
-                 ICON_FA_STOPWATCH, ModuleCategory::Utility)
+                 "timer", ModuleCategory::Utility)
 {
     m_settings.defineFloat("speed","Tick Multiplier",2.f,0.1f,10.f);
     m_settings.defineBool ("resetOnDisable","Reset Speed on Disable",true);

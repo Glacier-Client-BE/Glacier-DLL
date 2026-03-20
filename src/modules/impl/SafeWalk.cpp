@@ -3,7 +3,7 @@
 #include <IconsFontAwesome5.h>
 
 SafeWalk::SafeWalk()
-    : ModuleBase("Safe Walk","Prevents falling off edges",ICON_FA_SHOE_PRINTS,ModuleCategory::Movement)
+    : ModuleBase("Safe Walk","Prevents falling off edges","safewalk",ModuleCategory::Movement)
 {
     m_settings.defineBool("onlyEdge","Only Near Edges",true);
     m_settings.defineBool("notify",  "Notify on Toggle",false);

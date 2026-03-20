@@ -4,12 +4,9 @@
 class ComboCounter : public ModuleBase {
 public:
     ComboCounter();
-    void onEnable() override;
-    void onRenderImGui() override;
-    void registerHit(); void resetCombo();
+    void onEnable() override; void onTick() override; void onRenderImGui() override;
 private:
     using Clock = std::chrono::high_resolution_clock;
-    int m_combo=0, m_maxCombo=0;
-    Clock::time_point m_lastHit;
-    bool m_pLMB=false;
+    int m_combo=0, m_max=0; bool m_pLMB=false, m_dead=false; float m_alpha=1.f;
+    Clock::time_point m_lastHit{};
 };

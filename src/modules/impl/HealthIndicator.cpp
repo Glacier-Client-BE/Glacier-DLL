@@ -6,7 +6,7 @@
 
 HealthIndicator::HealthIndicator()
     : ModuleBase("Health Indicator","Health bar above every nearby player",
-                 ICON_FA_HEARTBEAT, ModuleCategory::Visual)
+                 "healthindicator", ModuleCategory::Visual)
 {
     m_settings.defineFloat("range",   "Range (blocks)", 30.f, 5.f, 80.f);
     m_settings.defineFloat("barWidth","Bar Width",       40.f, 20.f,100.f);

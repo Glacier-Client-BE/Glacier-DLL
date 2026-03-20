@@ -2,6 +2,13 @@
 #include "../modules/ModuleBase.h"
 #include <string>
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  ModMenu  —  three-state machine
+//
+//  GRID     : 3-col module card grid with category pills + search
+//  SETTINGS : dedicated per-module settings screen with ← Back
+//  INFO     : per-module description / info screen with ← Back
+// ─────────────────────────────────────────────────────────────────────────────
 class ModMenu {
 public:
     static ModMenu& get();
@@ -15,34 +22,39 @@ private:
     ModMenu(const ModMenu&) = delete;
     ModMenu& operator=(const ModMenu&) = delete;
 
-    void renderHeader(ImDrawList* dl, ImVec2 pos, ImVec2 sz);
-    void renderTabBar(ImDrawList* dl, ImVec2 pos, ImVec2 sz);
-    void renderModulesTab();
-    void renderElementsTab();
-    void renderEditorsTab();
-    void renderInformationTab();
-    void renderSettingsPanel(ModuleBase* mod);
-    void renderInfoPanel(ModuleBase* mod);
-    void renderSettingWidget(const std::string& key, SettingDef& def);
+    enum class Screen { Grid, Settings, Info };
 
-    bool         m_open           = false;
-    int          m_activeTab      = 0;
-    int          m_activeCat      = 0;
-    ModuleBase*  m_selectedModule = nullptr;
-    ModuleBase*  m_infoModule     = nullptr;
-    bool         m_showInfo       = false;
-    bool         m_capturingKey   = false;
-    char         m_searchBuf[128] = {};
+    // Sub-renders
+    void renderGrid();
+    void renderSettingsScreen();
+    void renderInfoScreen();
 
-    // Layout constants
-    static constexpr float kMenuW     = 760.f;
-    static constexpr float kMenuH     = 520.f;
-    static constexpr float kHeaderH   = 48.f;
-    static constexpr float kTabBarH   = 42.f;
-    static constexpr float kCatBarH   = 40.f;
-    static constexpr float kSettingsW = 220.f;
-    static constexpr float kGridPad   = 12.f;
-    static constexpr float kGridGap   = 10.f;
-    static constexpr float kCardH     = 148.f;
-    static constexpr int   kCols      = 3;
+    // Helpers
+    void renderHeader(float panW);
+    void renderCategoryBar(float panW);
+    void renderModuleCard(ModuleBase* mod, float x, float y, float w, float h);
+    void renderBackButton(float x, float y);
+    void renderSettingRow(const std::string& key, SettingDef& def, float panW);
+    void drawBg(float w, float h);
+
+    bool        m_open           = false;
+    Screen      m_screen         = Screen::Grid;
+    int         m_activeCat      = 0;
+    ModuleBase* m_selectedMod    = nullptr;
+    bool        m_capturingKey   = false;
+    char        m_searchBuf[128] = {};
+
+    // Animation: fade-in alpha for screen transitions
+    float m_transAlpha = 1.f;
+
+    // Dimensions
+    static constexpr float W        = 780.f;
+    static constexpr float H        = 540.f;
+    static constexpr float HDR_H    = 52.f;
+    static constexpr float CAT_H    = 44.f;
+    static constexpr float ROUND    = 14.f;
+    static constexpr float CARD_H   = 152.f;
+    static constexpr float CARD_GAP = 10.f;
+    static constexpr float GRID_PAD = 14.f;
+    static constexpr int   COLS     = 3;
 };

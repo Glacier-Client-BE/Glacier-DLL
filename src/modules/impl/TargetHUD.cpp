@@ -1,119 +1,105 @@
 #include "TargetHUD.h"
 #include "../../sdk/ClientInstance.h"
-#include <IconsFontAwesome5.h>
+#include "../../render/HUDStyle.h"
 #include <imgui.h>
 #include <cstdio>
-#include <cmath>
+#include <algorithm>
 
 TargetHUD::TargetHUD()
-    : ModuleBase("Target HUD","Shows info about the entity you're targeting",
-                 ICON_FA_CROSSHAIRS, ModuleCategory::Combat, 300.f, 200.f)
+    : ModuleBase("Target HUD", "Detailed target info panel with animated health bar",
+                 "targethud", ModuleCategory::Combat, 300.f, 200.f)
 {
-    m_settings.defineBool ("showHealth",     "Show Health Bar",    true);
-    m_settings.defineBool ("showDistance",   "Show Distance",      true);
-    m_settings.defineBool ("showArmor",      "Show Armor Points",  true);
-    m_settings.defineBool ("showName",       "Show Name",          true);
-    m_settings.defineFloat("scale",          "Scale",             1.f, 0.5f, 2.f);
-    m_settings.defineFloat("bgAlpha",        "BG Alpha",          0.85f, 0.f, 1.f);
-    m_settings.defineBool ("fadeOnNoTarget", "Hide When No Target",true);
-    m_settings.defineBool ("animateHealth",  "Animate Health Bar", true);
+    m_settings.defineBool ("showHealth",  "Health Bar",         true);
+    m_settings.defineBool ("showDist",    "Distance",           true);
+    m_settings.defineBool ("showArmor",   "Armor",              true);
+    m_settings.defineBool ("showType",    "Entity Type",        true);
+    m_settings.defineBool ("showName",    "Name",               true);
+    m_settings.defineBool ("animate",     "Animate Health",     true);
+    m_settings.defineBool ("fadeNoTgt",   "Hide When No Target",true);
+    m_settings.defineFloat("scale",       "Scale",              1.f,  0.5f, 2.f);
 }
 
-void TargetHUD::onTick() {
-    // Update target tracker every tick
-    auto* lp = getLocalPlayer();
-    TargetTracker::get().update(lp);
-}
+void TargetHUD::onTick() { TargetTracker::get().update(getLocalPlayer()); }
 
 void TargetHUD::onRenderImGui() {
-    auto& tt = TargetTracker::get();
-    Actor* target = tt.target;
+    auto&  tt  = TargetTracker::get();
+    Actor* tgt = tt.target;
+    if (!tgt && m_settings.getBool("fadeNoTgt")) return;
 
-    if (!target && m_settings.getBool("fadeOnNoTarget")) return;
+    bool  hasTgt = tgt != nullptr;
+    float hp = 20.f, maxHp = 20.f, dist = 0.f; int armor = 0;
+    std::string name = "No Target";
+    if (hasTgt) { name=tgt->getName(); hp=tgt->getHealth(); maxHp=tgt->getMaxHealth();
+                  dist=tt.distance; armor=tgt->getArmorValue(); }
 
-    // Populate data: from SDK or fallback preview
-    std::string targetName = "No Target";
-    float health = 20.f, maxHealth = 20.f, distance = 0.f;
-    int   armor  = 0;
-    bool  hasTarget = (target != nullptr);
+    if (name != m_lastName) { m_lastName=name; m_fadeIn=0.f; }
+    m_fadeIn = std::min(m_fadeIn + ImGui::GetIO().DeltaTime*5.f, 1.f);
 
-    if (hasTarget) {
-        targetName = target->getName();
-        health     = target->getHealth();
-        maxHealth  = target->getMaxHealth();
-        distance   = tt.distance;
-        armor      = target->getArmorValue();
+    float tgt_ = maxHp>0.f ? hp/maxHp : 0.f;
+    if (m_settings.getBool("animate"))
+        m_dispHP += (tgt_ - m_dispHP) * 0.12f;
+    else m_dispHP = tgt_;
+
+    float sc = m_settings.getFloat("scale");
+    ImU32 accent = HUDStyle::ACCENT;
+    const char* typeStr = "Entity";
+    if (hasTgt) {
+        if (tgt->isPlayer())    { accent=HUDStyle::GREEN;  typeStr="Player"; }
+        else if (tgt->isHostileMob()) { accent=HUDStyle::RED;    typeStr="Hostile"; }
+        else if (tgt->isPassiveMob()) { accent=HUDStyle::YELLOW; typeStr="Passive"; }
     }
 
-    // Smooth health bar animation
-    if (m_settings.getBool("animateHealth")) {
-        float targetRatio = maxHealth > 0.f ? health / maxHealth : 0.f;
-        m_displayedHealthRatio += (targetRatio - m_displayedHealthRatio) * 0.15f;
-    } else {
-        m_displayedHealthRatio = maxHealth > 0.f ? health / maxHealth : 0.f;
-    }
-
-    float sc    = m_settings.getFloat("scale");
-    float alpha = m_settings.getFloat("bgAlpha");
-    float panW  = 175.f * sc;
-    float panH  = (6.f + (m_settings.getBool("showName") ? 16.f : 0.f)
-                       + (m_settings.getBool("showHealth") ? 22.f : 0.f)
-                       + (m_settings.getBool("showDistance") ? 14.f : 0.f)
-                       + (m_settings.getBool("showArmor") ? 14.f : 0.f)) * sc;
+    float panW = 200.f * sc;
+    float panH = ( 6.f
+        + (m_settings.getBool("showName")  ? 20.f : 0.f)
+        + (m_settings.getBool("showType")  ? 14.f : 0.f)
+        + (m_settings.getBool("showHealth")? 26.f : 0.f)
+        + (m_settings.getBool("showDist")  ? 14.f : 0.f)
+        + (m_settings.getBool("showArmor") ? 14.f : 0.f)
+        ) * sc + HUDStyle::PAD_Y;
 
     ImGui::SetNextWindowPos(m_pos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize({panW, panH});
-    ImGui::SetNextWindowBgAlpha(alpha);
-    ImGuiWindowFlags f = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
-        | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBringToFrontOnFocus
-        | ImGuiWindowFlags_NoSavedSettings;
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.137f,0.153f,0.165f,alpha));
-    ImGui::PushStyleColor(ImGuiCol_Border,   ImVec4(0.447f,0.537f,0.855f,0.5f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,  {8*sc, 6*sc});
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,  8*sc);
+    ImGui::SetNextWindowSize({ panW, panH });
+    float a = m_fadeIn * (m_settings.getBool("fadeNoTgt") ? 1.f : 1.f);
+    HUDStyle::push(HUDStyle::BG_ALPHA * a);
+    if (ImGui::Begin("##tgt", nullptr, HUDStyle::WIN_FLAGS)) {
+        HUDStyle::drag(m_pos);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 bp = ImGui::GetWindowPos();
+        float bx = bp.x + 8.f*sc, oy = 6.f*sc;
 
-    if (ImGui::Begin("##targethud", nullptr, f)) {
-        if (ImGui::IsWindowHovered() && ImGui::IsMouseDragging(0)) {
-            auto d = ImGui::GetIO().MouseDelta; m_pos.x += d.x; m_pos.y += d.y;
-        }
-        ImDrawList* dl  = ImGui::GetWindowDrawList();
-        ImVec2      bp  = ImGui::GetWindowPos();
-        float pad = 8.f*sc, oy = 6.f*sc;
+        // Accent side bar
+        dl->AddRectFilled({ bp.x, bp.y+8.f*sc },{ bp.x+3.f*sc, bp.y+panH-8.f*sc }, accent, 2.f);
 
         if (m_settings.getBool("showName")) {
-            dl->AddText(nullptr, 13*sc, {bp.x+pad, bp.y+oy},
-                        hasTarget ? IM_COL32(255,255,255,255) : IM_COL32(100,100,100,180),
-                        targetName.c_str());
-            oy += 16.f*sc;
+            HUDStyle::text(dl, HUDStyle::FONT_BIG*sc, {bx,bp.y+oy},
+                hasTgt ? HUDStyle::WHITE : HUDStyle::GREY, name.c_str());
+            oy += 20.f*sc;
         }
-
+        if (m_settings.getBool("showType") && hasTgt) {
+            HUDStyle::text(dl,HUDStyle::FONT_SMALL*sc,{bx,bp.y+oy},accent,typeStr,false);
+            oy += 14.f*sc;
+        }
         if (m_settings.getBool("showHealth")) {
-            float barW = panW - pad*2;
-            float ratio = m_displayedHealthRatio;
-            ImU32 hcol = ratio > 0.5f ? IM_COL32(72,199,142,255)
-                       : ratio > 0.25f? IM_COL32(255,189,51,255)
-                       :                IM_COL32(237,70,70,255);
-            dl->AddRectFilled({bp.x+pad,  bp.y+oy}, {bp.x+pad+barW,   bp.y+oy+8*sc}, IM_COL32(35,39,42,255), 3*sc);
-            dl->AddRectFilled({bp.x+pad,  bp.y+oy}, {bp.x+pad+barW*ratio, bp.y+oy+8*sc}, hcol, 3*sc);
-            if (hasTarget) {
-                char hbuf[28]; snprintf(hbuf, sizeof(hbuf), "%.0f / %.0f HP", (double)health, (double)maxHealth);
-                dl->AddText(nullptr, 10*sc, {bp.x+pad+2, bp.y+oy+9*sc}, IM_COL32(153,170,181,200), hbuf);
+            float bw = panW - bx - HUDStyle::PAD_X;
+            ImU32 hcol = m_dispHP>0.5f?HUDStyle::GREEN:m_dispHP>0.25f?HUDStyle::YELLOW:HUDStyle::RED;
+            HUDStyle::bar(dl, bx, bp.y+oy, bw, 8.f*sc, m_dispHP, hcol, 4.f);
+            if (hasTgt) {
+                char hb[32]; snprintf(hb,sizeof(hb),"%.0f / %.0f HP",hp,maxHp);
+                HUDStyle::text(dl,HUDStyle::FONT_SMALL*sc,{bx,bp.y+oy+10.f*sc},HUDStyle::GREY,hb,false);
             }
-            oy += 22.f*sc;
+            oy += 26.f*sc;
         }
-
-        if (m_settings.getBool("showDistance") && hasTarget) {
-            char dbuf[28]; snprintf(dbuf, sizeof(dbuf), "%.1f blocks away", (double)distance);
-            dl->AddText(nullptr, 10*sc, {bp.x+pad, bp.y+oy}, IM_COL32(153,170,181,180), dbuf);
-            oy += 13.f*sc;
+        if (m_settings.getBool("showDist") && hasTgt) {
+            char db[32]; snprintf(db,sizeof(db),"%.1f blocks",dist);
+            HUDStyle::text(dl,HUDStyle::FONT_SMALL*sc,{bx,bp.y+oy},HUDStyle::GREY,db,false);
+            oy += 14.f*sc;
         }
-
-        if (m_settings.getBool("showArmor") && hasTarget) {
-            char abuf[28]; snprintf(abuf, sizeof(abuf), ICON_FA_SHIELD_ALT "  %d / 20", armor);
-            dl->AddText(nullptr, 10*sc, {bp.x+pad, bp.y+oy}, IM_COL32(114,137,218,200), abuf);
+        if (m_settings.getBool("showArmor") && hasTgt) {
+            char ab[24]; snprintf(ab,sizeof(ab),"%d armor pts",armor);
+            HUDStyle::text(dl,HUDStyle::FONT_SMALL*sc,{bx,bp.y+oy},accent,ab,false);
         }
     }
     ImGui::End();
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(2);
+    HUDStyle::pop();
 }

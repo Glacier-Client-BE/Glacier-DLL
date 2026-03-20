@@ -2,11 +2,15 @@
 #include "../ModuleBase.h"
 #include <deque>
 #include <string>
+
+struct PacketEntry { std::string text; bool inbound; };
+
 class PacketLogger : public ModuleBase {
 public:
     PacketLogger();
+    void onEnable() override;
     void onRenderImGui() override;
-    static void log(const std::string& pkt);
+    void log(const std::string& pkt, bool inbound = true);
 private:
-    inline static std::deque<std::string> s_log;
+    std::deque<PacketEntry> m_log;
 };

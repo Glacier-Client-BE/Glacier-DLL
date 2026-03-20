@@ -1,126 +1,151 @@
 #include "ArmorHUD.h"
 #include "../../sdk/ClientInstance.h"
-#include <IconsFontAwesome5.h>
+#include "../../render/HUDStyle.h"
 #include <imgui.h>
 #include <cstdio>
+#include <cmath>
 
-ArmorHUD::ArmorHUD()
-    : ModuleBase("Armor HUD","Equipped armor with durability bars",
-                 ICON_FA_SHIELD_ALT, ModuleCategory::HUD, 10.f, 160.f)
-{
-    m_settings.defineFloat("scale",     "Scale",             1.f, 0.5f, 2.f);
-    m_settings.defineBool ("showBars",  "Show Dur Bars",     true);
-    m_settings.defineBool ("showNames", "Show Item Names",   false);
-    m_settings.defineBool ("showNums",  "Show Dur Numbers",  true);
-    m_settings.defineFloat("barWidth",  "Bar Width",        80.f, 30.f, 200.f);
-    m_settings.defineFloat("bgAlpha",   "BG Alpha",         0.85f, 0.f, 1.f);
-    m_settings.defineBool ("vertical",  "Vertical Layout",   true);
-}
+static const char* kArmIcons[4]  = { "\xef\x80\x83", "\xef\x84\xa1", "\xef\x85\xa7", "\xef\x95\xb4" }; // FA glyphs via raw UTF8 fallback
+static const char* kArmLabels[4] = { "Helmet", "Chestplate", "Leggings", "Boots" };
 
-ImU32 ArmorHUD::durColor(int d, int m) {
-    if (m <= 0) return IM_COL32(153,170,181,255);
+static ImU32 durColor(int d, int m) {
+    if (m <= 0) return HUDStyle::GREY;
     float r = (float)d / m;
-    if (r > 0.6f) return IM_COL32(72,199,142,255);
-    if (r > 0.3f) return IM_COL32(255,189,51,255);
-    return IM_COL32(237,70,70,255);
+    return r > 0.6f ? HUDStyle::GREEN : r > 0.3f ? HUDStyle::YELLOW : HUDStyle::RED;
+}
+static float durRatio(int d, int m) {
+    if (m <= 0) return 0.f;
+    float r = (float)d / m;
+    return r < 0.f ? 0.f : r > 1.f ? 1.f : r;
 }
 
-std::array<ArmorSlot,4> ArmorHUD::getSlots() const {
+std::array<ArmorSlot, 5> ArmorHUD::getSlots() const {
     auto* lp = getLocalPlayer();
-    if (!lp) {
-        // Fallback preview data when not in-game
-        return {{{ICON_FA_HAT_WIZARD " Helmet",   80, 100},
-                 {ICON_FA_TSHIRT    " Chestplate",200, 250},
-                 {ICON_FA_SOCKS     " Leggings",  140, 225},
-                 {ICON_FA_SHOE_PRINTS " Boots",    20,  65}}};
-    }
-    static const char* slotIcon[4] = {
-        ICON_FA_HAT_WIZARD, ICON_FA_TSHIRT, ICON_FA_SOCKS, ICON_FA_SHOE_PRINTS
-    };
-    static const char* slotName[4] = {"Helmet","Chestplate","Leggings","Boots"};
-    std::array<ArmorSlot,4> slots;
+    std::array<ArmorSlot, 5> slots;
     for (int i = 0; i < 4; i++) {
-        ItemStack item = lp->getArmorItem(i);
-        char buf[32];
-        if (item.isValid())
-            snprintf(buf, sizeof(buf), "%s %s", slotIcon[i], item.name.empty() ? slotName[i] : item.name.c_str());
-        else
-            snprintf(buf, sizeof(buf), "%s %s", slotIcon[i], slotName[i]);
-        slots[i] = {buf, item.isValid() ? item.getDurability() : 0,
-                        item.isValid() ? item.maxDamage       : 0};
+        ItemStack item = lp ? lp->getArmorItem(i) : ItemStack{};
+        slots[i] = { kArmIcons[i], kArmLabels[i],
+                     item.isValid() ? item.getDurability() : 0,
+                     item.isValid() ? item.maxDamage       : 0,
+                     item.isValid(), item.name };
     }
+    ItemStack off = lp ? lp->getInventoryItem(40) : ItemStack{};
+    slots[4] = { "\xef\x82\xa5", "Offhand",
+                 off.isValid() ? off.getDurability() : 0,
+                 off.isValid() ? off.maxDamage       : 0,
+                 off.isValid(), off.name };
     return slots;
 }
 
+ArmorHUD::ArmorHUD()
+    : ModuleBase("Armor HUD", "Armor durability with big icons and low-dur pulse warning",
+                 "armorhud", ModuleCategory::HUD, 10.f, 160.f)
+{
+    m_settings.defineFloat("scale",       "Scale",            1.f,   0.5f, 2.f);
+    m_settings.defineBool ("showBars",    "Dur Bars",         true);
+    m_settings.defineBool ("showNums",    "Dur Numbers",      true);
+    m_settings.defineBool ("showEmpty",   "Show Empty Slots",  true);
+    m_settings.defineBool ("showOffhand", "Show Offhand",      true);
+    m_settings.defineBool ("lowWarn",     "Low-Dur Warning",   true);
+    m_settings.defineFloat("lowPct",      "Warn Below %",     25.f, 1.f, 60.f);
+    m_settings.defineFloat("barLen",      "Bar Length",       72.f, 24.f,180.f);
+}
+
 void ArmorHUD::onRenderImGui() {
-    float sc  = m_settings.getFloat("scale");
-    float bw  = m_settings.getFloat("barWidth") * sc;
-    bool  bars = m_settings.getBool("showBars");
-    bool  names= m_settings.getBool("showNames");
-    bool  nums = m_settings.getBool("showNums");
-    float alpha= m_settings.getFloat("bgAlpha");
-    float rh   = 22.f * sc, pad = 6.f * sc, iw = 16.f * sc;
-    float totalW = iw + pad + bw + (nums ? 26.f*sc : 0.f) + pad*2;
-    float totalH = rh*4 + pad*2;
+    float sc     = m_settings.getFloat("scale");
+    float barLen = m_settings.getFloat("barLen") * sc;
+    bool  bars   = m_settings.getBool("showBars");
+    bool  nums   = m_settings.getBool("showNums");
+    bool  showEmp= m_settings.getBool("showEmpty");
+    bool  showOff= m_settings.getBool("showOffhand");
+    bool  lw     = m_settings.getBool("lowWarn");
+    float lwPct  = m_settings.getFloat("lowPct") / 100.f;
+
+    float iconW = 28.f * sc;
+    float rowH  = iconW + 4.f * sc;
+    float numW  = nums ? 34.f * sc : 0.f;
+    float barH  = 7.f * sc;
+
+    auto slots   = getSlots();
+    int  count   = showOff ? 5 : 4;
+    int  vis     = 0;
+    for (int i = 0; i < count; i++) if (showEmp || slots[i].hasItem) vis++;
+    if (vis == 0) return;
+
+    float panW = HUDStyle::PAD_X + iconW + 8.f * sc + barLen + numW + HUDStyle::PAD_X;
+    float panH = rowH * vis + HUDStyle::PAD_Y * 2 + (vis - 1) * 4.f * sc;
 
     ImGui::SetNextWindowPos(m_pos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize({totalW, totalH});
-    ImGui::SetNextWindowBgAlpha(alpha);
-    ImGuiWindowFlags f = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
-        | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBringToFrontOnFocus
-        | ImGuiWindowFlags_NoSavedSettings;
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.137f,0.153f,0.165f,alpha));
-    ImGui::PushStyleColor(ImGuiCol_Border,   ImVec4(0.447f,0.537f,0.855f,0.4f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,  {pad, pad});
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,  8.f*sc);
+    ImGui::SetNextWindowSize({ panW, panH });
+    HUDStyle::push();
 
-    if (ImGui::Begin("##armor", nullptr, f)) {
-        if (ImGui::IsWindowHovered() && ImGui::IsMouseDragging(0)) {
-            auto d = ImGui::GetIO().MouseDelta; m_pos.x += d.x; m_pos.y += d.y;
-        }
+    if (ImGui::Begin("##armor", nullptr, HUDStyle::WIN_FLAGS)) {
+        HUDStyle::drag(m_pos);
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImVec2 cur = ImGui::GetWindowPos(); cur.x += pad; cur.y += pad;
+        ImVec2 base = ImGui::GetWindowPos();
+        base.x += HUDStyle::PAD_X; base.y += HUDStyle::PAD_Y;
 
-        auto slots = getSlots();
-        for (int i = 0; i < 4; i++) {
+        float pulse = 0.5f + 0.5f * sinf((float)ImGui::GetTime() * 6.f);
+        int drawn = 0;
+
+        for (int i = 0; i < count; i++) {
             auto& s = slots[i];
-            bool   hasItem = s.maxDur > 0;
-            ImU32  dc      = durColor(s.dur, s.maxDur);
-            float  ratio   = hasItem ? (float)s.dur / s.maxDur : 0.f;
+            if (!showEmp && !s.hasItem) continue;
 
-            // Icon badge
-            ImVec2 iTL = cur, iBR = {cur.x+iw, cur.y+rh-pad*.5f};
-            dl->AddRectFilled(iTL, iBR, IM_COL32(44,47,51,220), 4);
-            dl->AddRect(iTL, iBR, hasItem ? dc : IM_COL32(60,64,70,200), 4);
+            float oy = drawn * (rowH + 4.f * sc);
+            ImU32 dc = durColor(s.dur, s.maxDur);
+            float ratio = durRatio(s.dur, s.maxDur);
+            bool  isLow = lw && s.hasItem && ratio > 0.f && ratio < lwPct;
 
-            // Slot letter / icon
-            const char* icn = s.name.c_str(); // first char is icon
-            ImVec2 ts = ImGui::CalcTextSize(icn);
-            dl->AddText({iTL.x+(iw-ts.x)*.5f, iTL.y+(iBR.y-iTL.y-ts.y)*.5f},
-                        hasItem ? IM_COL32(255,255,255,255) : IM_COL32(80,85,95,200), icn);
+            // Icon tile
+            ImVec2 iTL = { base.x, base.y + oy };
+            ImVec2 iBR = { iTL.x + iconW, iTL.y + iconW };
+            ImU32  bg2  = isLow
+                ? IM_COL32(60, 10, 10, (int)(180 + 60 * pulse))
+                : IM_COL32(30, 30, 30, 220);
+            ImU32  bdr  = isLow
+                ? IM_COL32(237, 70, 70, (int)(100 + 155 * pulse))
+                : (s.hasItem ? dc : IM_COL32(55, 60, 68, 180));
+            dl->AddRectFilled(iTL, iBR, bg2, 6.f * sc);
+            dl->AddRect(iTL, iBR, bdr, 6.f * sc, 0, isLow ? 2.f : 1.f);
 
-            float tx = cur.x + iw + pad, ty = cur.y;
-            if (names) {
-                dl->AddText(nullptr, 11*sc, {tx,ty}, IM_COL32(153,170,181,200), s.name.c_str());
-                ty += 13.f*sc;
-            }
-            if (bars && hasItem) {
-                ImVec2 tl{tx, ty+(rh-pad*.5f-6*sc)*.5f}, br{tx+bw, tl.y+6*sc};
-                dl->AddRectFilled(tl, br, IM_COL32(35,39,42,255), 3);
-                dl->AddRectFilled(tl, {tl.x+bw*ratio, br.y}, dc, 3);
-                if (nums) {
-                    char nb[12];
-                    snprintf(nb, sizeof(nb), "%d", s.dur);
-                    dl->AddText(nullptr, 10*sc, {br.x+3, tl.y}, IM_COL32(153,170,181,200), nb);
+            // Centered icon letter (using slot label first char as fallback)
+            char fallback[2] = { s.label[0], 0 };
+            ImVec2 iSz = ImGui::CalcTextSize(fallback);
+            float  fs2  = iconW * 0.5f;
+            dl->AddText(ImGui::GetFont(), fs2,
+                { iTL.x + (iconW - iSz.x * fs2 / ImGui::GetFontSize()) * 0.5f,
+                  iTL.y + (iconW - iSz.y * fs2 / ImGui::GetFontSize()) * 0.5f },
+                s.hasItem ? dc : IM_COL32(70, 75, 85, 160), fallback);
+
+            float tx = base.x + iconW + 8.f * sc;
+
+            if (s.hasItem) {
+                // Name
+                if (!s.itemName.empty()) {
+                    HUDStyle::text(dl, HUDStyle::FONT_SMALL * sc,
+                        { tx, base.y + oy + 1.f }, HUDStyle::GREY, s.itemName.c_str(), false);
                 }
-            } else if (!hasItem) {
-                dl->AddText(nullptr, 10*sc, {tx, ty+(rh-pad*.5f-10*sc)*.5f},
-                            IM_COL32(60,65,70,180), "Empty");
+
+                if (bars) {
+                    float by = base.y + oy + iconW * 0.5f - barH * 0.5f;
+                    if (!s.itemName.empty()) by = base.y + oy + HUDStyle::FONT_SMALL * sc + 4.f;
+                    HUDStyle::bar(dl, tx, by, barLen, barH, ratio, dc, 4.f);
+                    if (nums) {
+                        char nb[12]; snprintf(nb, sizeof(nb), "%d", s.dur);
+                        HUDStyle::text(dl, HUDStyle::FONT_SMALL * sc,
+                            { tx + barLen + 4.f, by }, HUDStyle::GREY, nb, false);
+                    }
+                }
+            } else {
+                HUDStyle::text(dl, HUDStyle::FONT_SMALL * sc,
+                    { tx, base.y + oy + iconW * 0.5f - HUDStyle::FONT_SMALL * sc * 0.5f },
+                    IM_COL32(60,65,72,180), "Empty", false);
             }
-            cur.y += rh;
+
+            drawn++;
         }
     }
     ImGui::End();
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(2);
+    HUDStyle::pop();
 }

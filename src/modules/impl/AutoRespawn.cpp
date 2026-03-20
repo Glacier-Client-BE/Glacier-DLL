@@ -4,10 +4,12 @@
 #include <chrono>
 
 AutoRespawn::AutoRespawn()
-    : ModuleBase("Auto Respawn","Automatically clicks Respawn on death",ICON_FA_REDO,ModuleCategory::Utility)
+    : ModuleBase("Auto Respawn", "Automatically clicks Respawn after death with configurable delay",
+                 "autorespawn", ModuleCategory::Utility)
 {
-    m_settings.defineFloat("delay",  "Respawn Delay (s)", 0.2f, 0.f, 3.f);
-    m_settings.defineBool ("notify", "Log on Respawn",    true);
+    m_settings.defineFloat("delay",    "Respawn Delay (s)", 0.25f, 0.f, 5.f);
+    m_settings.defineBool ("notify",   "Notify on Respawn", true);
+    m_settings.defineBool ("onlyPVP",  "Only in Multiplayer", false);
 }
 
 void AutoRespawn::onEnable()  { m_deathTime = {}; m_waiting = false; }
@@ -17,6 +19,9 @@ void AutoRespawn::onTick() {
     auto* lp = getLocalPlayer();
     if (!lp) return;
 
+    // Only-multiplayer check
+    if (m_settings.getBool("onlyPVP") && lp->getNetworkPing() <= 0) return;
+
     bool dead = lp->isDead() || !lp->isAlive();
 
     if (dead && !m_waiting) {
@@ -24,17 +29,17 @@ void AutoRespawn::onTick() {
         m_waiting   = true;
     }
 
-    if (m_waiting && dead) {
+    if (m_waiting) {
+        if (!dead) {
+            m_waiting = false;
+            return;
+        }
         float elapsed = std::chrono::duration<float>(
             std::chrono::high_resolution_clock::now() - m_deathTime).count();
-
         if (elapsed >= m_settings.getFloat("delay")) {
-            // Send respawn packet via Level
             auto* lvl = getLevel();
             if (lvl) lvl->sendRespawnPacket();
             m_waiting = false;
         }
-    } else if (!dead) {
-        m_waiting = false;
     }
 }

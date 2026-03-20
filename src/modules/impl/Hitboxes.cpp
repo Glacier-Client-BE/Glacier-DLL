@@ -7,7 +7,7 @@
 
 Hitboxes::Hitboxes()
     : ModuleBase("Hitboxes", "Renders visible hitbox outlines around nearby entities",
-                 ICON_FA_VECTOR_SQUARE, ModuleCategory::Visual)
+                 "hitboxes", ModuleCategory::Visual)
 {
     m_settings.defineBool ("players",  "Show Players",    true);
     m_settings.defineBool ("mobs",     "Show Mobs",       true);

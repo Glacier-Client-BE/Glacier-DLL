@@ -12,7 +12,7 @@ static ImU32 ImAlphaBlendColors(ImU32 col, float alpha) {
 }
 
 NotificationSystem::NotificationSystem()
-    : ModuleBase("Notifications","On-screen toast notifications",ICON_FA_BELL,ModuleCategory::Utility,0.f,0.f)
+    : ModuleBase("Notifications","On-screen toast notifications","notificationsystem",ModuleCategory::Utility,0.f,0.f)
 {
     m_settings.defineFloat("duration","Duration (s)",  3.f,1.f,10.f);
     m_settings.defineFloat("width",   "Toast Width", 240.f,120.f,400.f);

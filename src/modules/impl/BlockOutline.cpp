@@ -4,7 +4,7 @@
 
 BlockOutline::BlockOutline()
     : ModuleBase("Block Outline", "Customizes the selected block outline and overlay color",
-                 ICON_FA_BORDER_ALL, ModuleCategory::Visual)
+                 "blockoutline", ModuleCategory::Visual)
 {
     m_settings.defineBool ("showOutline",  "Show Outline",      true);
     m_settings.defineFloat("outlineR",     "Outline R",         114.f, 0.f, 255.f);
