@@ -7,7 +7,6 @@ public:
     FPSCounter();
     void onEnable() override; void onDisable() override;
     void onRender(ImDrawList* dl) override;
-    void onRenderImGui() override;
 private:
     using Clock = std::chrono::high_resolution_clock;
     float m_fps=0.f, m_slow=0.f;
