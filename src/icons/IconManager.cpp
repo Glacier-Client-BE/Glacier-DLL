@@ -32,7 +32,6 @@ void IconManager::shutdown() {
     for (auto& [k, srv] : m_cache)
         if (srv) srv->Release();
     m_cache.clear();
-    if (m_fallback) { m_fallback->Release(); m_fallback = nullptr; }
     m_device = nullptr;
 }
 
@@ -161,7 +160,7 @@ ID3D11ShaderResourceView* IconManager::makeProceduralIcon(const std::string& nam
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-ID3D11ShaderResourceView* IconManager::createSRV(const BYTE* rgba, UINT w, UINT h) {
+ID3D11ShaderResourceView* IconManager::createSRV(const unsigned char* rgba, unsigned w, unsigned h) {
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width            = w;
     desc.Height           = h;
