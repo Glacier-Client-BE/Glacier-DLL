@@ -3,6 +3,7 @@
 #include <imgui.h>
 #include <wincodec.h>
 #include <wrl/client.h>
+#include <vector>
 #include <cstring>
 #include <cmath>
 
@@ -98,7 +99,7 @@ ID3D11ShaderResourceView* IconManager::makeProceduralIcon(const std::string& nam
     constexpr int SZ = 32;
     std::vector<BYTE> pixels(SZ * SZ * 4, 0);
 
-    ImU32 col = hashColor(name);
+    uint32_t col = hashColor(name);
     BYTE r = (col >> 0) & 0xFF;
     BYTE g = (col >> 8) & 0xFF;
     BYTE b = (col >> 16) & 0xFF;
@@ -190,7 +191,7 @@ ID3D11ShaderResourceView* IconManager::createSRV(const BYTE* rgba, UINT w, UINT 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-ImU32 IconManager::hashColor(const std::string& name) {
+uint32_t IconManager::hashColor(const std::string& name) {
     // Simple djb2 hash → map to a pleasant hue
     uint32_t hash = 5381;
     for (char c : name) hash = ((hash << 5) + hash) + (unsigned char)c;

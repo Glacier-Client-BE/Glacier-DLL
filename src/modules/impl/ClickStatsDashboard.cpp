@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <algorithm>
 #include <numeric>
+#include <numeric>
 
 ClickStatsDashboard::ClickStatsDashboard()
     : ModuleBase("Click Stats","CPS dashboard with peak, average and graph",
@@ -70,8 +71,8 @@ void ClickStatsDashboard::onRenderImGui() {
             int n=(int)m_cpsHistory.size(); float sw=bw/(n-1);
             for (int i=1;i<n;i++){
                 float x1=bx+(i-1)*sw,x2=bx+i*sw;
-                float y1=bp.y+oy+gh-std::min(m_cpsHistory[i-1]/maxV,1.f)*gh;
-                float y2=bp.y+oy+gh-std::min(m_cpsHistory[i  ]/maxV,1.f)*gh;
+                float y1=bp.y+oy+gh-(std::min)(m_cpsHistory[i-1]/maxV,1.f)*gh;
+                float y2=bp.y+oy+gh-(std::min)(m_cpsHistory[i  ]/maxV,1.f)*gh;
                 dl->AddLine({x1,y1},{x2,y2},HUDStyle::ACCENT,1.2f);
             }
         }

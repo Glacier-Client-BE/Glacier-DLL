@@ -7,7 +7,6 @@
 #include "impl/CoordinatesHUD.h"
 #include "impl/SpeedHUD.h"
 #include "impl/ActiveModsList.h"
-#include "impl/Clock.h"
 #include "impl/ClockCompass.h"
 #include "impl/PingDisplay.h"
 #include "impl/ReachDisplay.h"

@@ -2,14 +2,16 @@
 #include "../ModuleBase.h"
 #include <deque>
 #include <chrono>
+#include <Windows.h>
 
 class Keystrokes : public ModuleBase {
 public:
     Keystrokes();
     void onRenderImGui() override;
 private:
-    void drawKey(ImDrawList* dl, const char* lbl, float x, float y,
-                 float w, float h, bool pressed, bool small = false) const;
+    // signature matches the .cpp exactly — no default parameter
+    void drawKey(ImDrawList* dl, const char* lbl,
+                 float x, float y, float w, float h, bool pressed) const;
 
     using Clock = std::chrono::high_resolution_clock;
     using TP    = Clock::time_point;

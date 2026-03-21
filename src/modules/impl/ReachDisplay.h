@@ -11,5 +11,5 @@ public:
     void onRenderImGui() override;
 private:
     std::deque<float> m_samples;
-    float             m_lastRecorded = -1.f;
+    float             m_lastRec = -1.f;
 };

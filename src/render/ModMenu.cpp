@@ -431,8 +431,8 @@ void ModMenu::renderSettingsScreen() {
     if (srv) dl->AddImage((ImTextureID)srv, { pos.x+16.f, pos.y+11.f }, { pos.x+16.f+iconSz, pos.y+11.f+iconSz });
 
     // Title
-    shadow(dl, 16.f, { pos.x + 16.f + iconSz + 10.f, pos.y + 14.f }, kWhite, mod->getName().c_str());
-    shadow(dl, 10.f, { pos.x + 16.f + iconSz + 10.f, pos.y + 32.f }, kGreyDim, "Settings");
+    shadow(dl, 16.f, { pos.x + 16.f + iconSz + 10.f, pos.y + 14.f }, mod->getName().c_str(), kWhite);
+    shadow(dl, 10.f, { pos.x + 16.f + iconSz + 10.f, pos.y + 32.f }, "Settings",            kGreyDim);
 
     // Close
     ImGui::SetCursorPos({ W - 42.f, 9.f });
@@ -517,8 +517,8 @@ void ModMenu::renderInfoScreen() {
     float iconSz = 30.f;
     auto* srv = IconManager::get().getIcon(mod->getIconName());
     if (srv) dl->AddImage((ImTextureID)srv, { pos.x+16.f, pos.y+11.f }, { pos.x+16.f+iconSz, pos.y+11.f+iconSz });
-    shadow(dl, 16.f, { pos.x+16.f+iconSz+10.f, pos.y+14.f }, kWhite, mod->getName().c_str());
-    shadow(dl, 10.f, { pos.x+16.f+iconSz+10.f, pos.y+32.f }, kGreyDim, categoryName(mod->getCategory()));
+    shadow(dl, 16.f, { pos.x+16.f+iconSz+10.f, pos.y+14.f }, mod->getName().c_str(),              kWhite);
+    shadow(dl, 10.f, { pos.x+16.f+iconSz+10.f, pos.y+32.f }, categoryName(mod->getCategory()), kGreyDim);
 
     ImGui::SetCursorPos({ W-42.f, 9.f });
     ImGui::PushStyleColor(ImGuiCol_Button,        { 0,0,0,0 });

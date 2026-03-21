@@ -45,10 +45,9 @@ void CoordinatesHUD::onRenderImGui() {
     int   pr =m_settings.getInt("precision");
 
     float fs  = HUDStyle::FONT_MID * sc;
-    float fss = HUDStyle::FONT_SMALL * sc;
     float lh  = fs + 4.f;
 
-    char xb[32],yb[32],zb[32],fb[48],cb[48],db[32],nb[64];
+    char xb[32],yb[32],zb[32],fb[48],cb[48],db[32];
     snprintf(xb,sizeof(xb),"X: %.*f",pr,(double)px);
     snprintf(yb,sizeof(yb),"Y: %.*f",pr,(double)py);
     snprintf(zb,sizeof(zb),"Z: %.*f",pr,(double)pz);
