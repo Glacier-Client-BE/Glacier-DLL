@@ -3,13 +3,22 @@
 #include <string>
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  ModMenu
+//  ModMenu  ·  Glacier Client  —  Sidebar Layout
 //
-//  Redesigned to feature a persistent Top Bar (Logo + Category Tabs)
-//  with the remaining window body dynamically rendering either:
-//  - GRID: Scrolled view of module cards.
-//  - SETTINGS: Dedicated page embedded for a specific module's settings.
+//   ╔══════════╦════════════════════════════════════════════╗
+//   ║ SIDEBAR  ║  CONTENT AREA                              ║
+//   ║──────────║────────────────────────────────────────────║
+//   ║ Glacier  ║  [🔍 Search...]                [Close]     ║
+//   ║ v1.x     ║──────────────────────────────────────────  ║
+//   ║──────────║  ┌──────┐ ┌──────┐ ┌──────┐              ║
+//   ║ ● HUD    ║  │ Mod  │ │ Mod  │ │ Mod  │              ║
+//   ║ ○ Combat ║  └──────┘ └──────┘ └──────┘              ║
+//   ║ ○ Move   ║  ...                                       ║
+//   ║ ○ Visual ║                                            ║
+//   ║ ○ Util   ║  —— or Settings sub-page ——               ║
+//   ╚══════════╩════════════════════════════════════════════╝
 // ─────────────────────────────────────────────────────────────────────────────
+
 class ModMenu {
 public:
     static ModMenu& get();
@@ -25,35 +34,40 @@ private:
 
     enum class Screen { Grid, Settings };
 
-    // Layout
-    void renderHeaderAndTabs(float panW);
-    void renderGridSubPage();
-    void renderSettingsSubPage();
+    void renderSidebar(ImVec2 wPos);
+    void renderContentArea(ImVec2 wPos);
+    void renderGridPage(ImVec2 wPos);
+    void renderSettingsPage(ImVec2 wPos);
 
-    // Elements
     void renderModuleCard(ModuleBase* mod, float x, float y, float w, float h);
-    void renderSettingRow(const std::string& key, SettingDef& def, float panW);
-    void renderToggleSwitch(float x, float y, bool active);
+    void renderSettingRow(const std::string& key, SettingDef& def, float rowW);
+    void renderToggle(float cx, float cy, bool active);
 
-    bool        m_open           = false;
-    Screen      m_screen         = Screen::Grid;
-    int         m_activeCat      = 0;
-    ModuleBase* m_selectedMod    = nullptr;
-    bool        m_capturingKey   = false;
+    // ── State ────────────────────────────────────────────────────────────────
+    bool        m_open        = false;
+    Screen      m_screen      = Screen::Grid;
+    int         m_activeCat   = 0;
+    ModuleBase* m_selectedMod = nullptr;
+    bool        m_capturingKey= false;
     char        m_searchBuf[128] = {};
 
-    // Animation: fade-in alpha for screen transitions
-    float m_transAlpha = 1.f;
-    float m_scrollAnim = 0.f;
+    float m_fadeAlpha   = 1.f;
+    float m_windowAlpha = 0.f;
 
-    // Dimensions
-    static constexpr float W        = 800.f;
-    static constexpr float H        = 560.f;
-    static constexpr float HDR_H    = 60.f;
-    static constexpr float CAT_H    = 50.f;
-    static constexpr float ROUND    = 12.f;
-    static constexpr float CARD_H   = 120.f;
-    static constexpr float CARD_GAP = 12.f;
-    static constexpr float GRID_PAD = 16.f;
-    static constexpr int   COLS     = 3;
+    // sidebar highlight animation
+    float m_catIndicatorY    = 0.f;
+    float m_catIndicatorYTgt = 0.f;
+
+    // ── Layout ───────────────────────────────────────────────────────────────
+    static constexpr float W          = 870.f;
+    static constexpr float H          = 570.f;
+    static constexpr float SIDEBAR_W  = 185.f;
+    static constexpr float ROUND      = 14.f;
+    static constexpr float CARD_H     = 110.f;
+    static constexpr float CARD_GAP   = 10.f;
+    static constexpr float GRID_PAD   = 14.f;
+    static constexpr int   COLS       = 3;
+    static constexpr float CONTENT_X  = SIDEBAR_W;
+    static constexpr float CONTENT_W  = W - SIDEBAR_W;
+    static constexpr float SEARCH_H   = 52.f;
 };
