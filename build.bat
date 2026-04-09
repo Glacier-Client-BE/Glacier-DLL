@@ -9,5 +9,7 @@ cmake --build build --config Release --parallel
 if %errorlevel% neq 0 ( echo [Glacier] Build FAILED & pause & exit /b 1 )
 
 echo.
-echo [Glacier] Done!  Output: build\Release\glacier.dll
+echo [Glacier] Done!
+echo   glacier.dll  : build\Release\glacier.dll
+echo   FA font      : embedded in DLL (no external file needed)
 pause

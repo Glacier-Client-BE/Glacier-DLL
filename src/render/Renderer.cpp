@@ -6,6 +6,7 @@
 #include <imgui_impl_win32.h>
 #include <IconsFontAwesome5.h>
 #include <dxgi.h>
+#include <fa_solid_900_embedded.h>
 
 Renderer& Renderer::get() {
     static Renderer instance;
@@ -29,19 +30,25 @@ bool Renderer::init(ID3D11Device* device, IDXGISwapChain* swapChain) {
     // 1. Default proportional font (Proggy Clean built-in)
     io.Fonts->AddFontDefault();
 
-    // 2. Merge Font Awesome 5 Solid into the default font
+    // 2. Merge Font Awesome 5 Solid into the default font (embedded in binary)
     {
         static const ImWchar faRanges[] = { ICON_MIN_FA, ICON_MAX_FA, 0 };
         ImFontConfig cfg;
-        cfg.MergeMode      = true;
-        cfg.PixelSnapH     = true;
-        cfg.GlyphMinAdvanceX = 13.f;
+        cfg.MergeMode            = true;
+        cfg.PixelSnapH           = true;
+        cfg.GlyphMinAdvanceX     = 13.f;
+        cfg.FontDataOwnedByAtlas = false;  // data is in static storage — don't free
 
-        std::string faPath = ClientConfig::get().resolvePath("fa-solid-900.ttf");
-        if (io.Fonts->AddFontFromFileTTF(faPath.c_str(), 13.f, &cfg, faRanges))
-            Logger::info("Renderer: Font Awesome loaded from {}", faPath);
-        else
-            Logger::warn("Renderer: FA font not found at {} — icons will be missing", faPath);
+        if (fa_solid_900_ttf_size > 0) {
+            io.Fonts->AddFontFromMemoryTTF(
+                const_cast<unsigned char*>(fa_solid_900_ttf),
+                static_cast<int>(fa_solid_900_ttf_size),
+                13.f, &cfg, faRanges);
+            Logger::info("Renderer: Font Awesome loaded from embedded data ({} bytes)",
+                         fa_solid_900_ttf_size);
+        } else {
+            Logger::warn("Renderer: FA font not embedded — icons will be missing");
+        }
     }
 
     io.Fonts->Build();

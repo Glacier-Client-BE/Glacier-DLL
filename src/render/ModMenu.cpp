@@ -14,10 +14,10 @@
 static constexpr ImU32 kBlurple   = IM_COL32(114, 137, 218, 255);
 static constexpr ImU32 kBlurpleDm = IM_COL32(114, 137, 218,  70);
 static constexpr ImU32 kBg0       = IM_COL32( 10,  10,  12, 255); // deepest
-static constexpr ImU32 kBg1       = IM_COL32( 18,  18,  22, 255); // card bg
-static constexpr ImU32 kBg2       = IM_COL32( 26,  26,  32, 255); // header / cat bar
-static constexpr ImU32 kBg3       = IM_COL32( 32,  34,  42, 255); // settings panel
-static constexpr ImU32 kBorder    = IM_COL32(114, 137, 218,  38);
+static constexpr ImU32 kBg1       = IM_COL32( 16,  16,  20, 255); // base
+static constexpr ImU32 kBg2       = IM_COL32( 22,  22,  28, 255); // elements/cards
+static constexpr ImU32 kBg3       = IM_COL32( 26,  26,  34, 255); // hovered elements
+static constexpr ImU32 kBorder    = IM_COL32(255, 255, 255,  15);
 static constexpr ImU32 kBorderOn  = IM_COL32(114, 137, 218, 160);
 static constexpr ImU32 kWhite     = IM_COL32(255, 255, 255, 255);
 static constexpr ImU32 kGrey      = IM_COL32(155, 160, 175, 220);
@@ -77,7 +77,6 @@ void ModMenu::init() {}
 void ModMenu::render() {
     if (!m_open) return;
 
-    // Keybind capture
     if (m_capturingKey) {
         for (int vk = 8; vk <= 0xFE; ++vk) {
             if (vk==VK_LBUTTON||vk==VK_RBUTTON||vk==VK_MBUTTON) continue;
@@ -89,7 +88,6 @@ void ModMenu::render() {
         }
     }
 
-    // Smooth transition alpha
     m_transAlpha = m_transAlpha + (1.f - m_transAlpha) * 0.18f;
 
     ImGuiIO& io = ImGui::GetIO();
@@ -109,21 +107,25 @@ void ModMenu::render() {
         ImDrawList* dl  = ImGui::GetWindowDrawList();
         ImVec2      pos = ImGui::GetWindowPos();
 
-        // ── Drop shadows ──────────────────────────────────────────────────
         for (int i = 6; i >= 1; --i)
             dl->AddRectFilled({ pos.x+(float)i, pos.y+(float)i },
                               { pos.x+W+(float)i, pos.y+H+(float)i },
                               IM_COL32(0,0,0,15), ROUND+4.f);
 
-        // ── Window background ─────────────────────────────────────────────
         dl->AddRectFilled(pos, { pos.x+W, pos.y+H }, kBg0, ROUND);
         dl->AddRect(pos, { pos.x+W, pos.y+H }, kBorder, ROUND, 0, 1.2f);
 
+        renderHeaderAndTabs(W);
+
+        float topH = HDR_H + CAT_H;
+        ImGui::SetCursorPos({ 0.f, topH });
+        
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, m_transAlpha);
         switch (m_screen) {
-            case Screen::Grid:     renderGrid();           break;
-            case Screen::Settings: renderSettingsScreen(); break;
-            case Screen::Info:     renderInfoScreen();     break;
+            case Screen::Grid:     renderGridSubPage();     break;
+            case Screen::Settings: renderSettingsSubPage(); break;
         }
+        ImGui::PopStyleVar();
     }
     ImGui::End();
     ImGui::PopStyleColor();
@@ -131,30 +133,31 @@ void ModMenu::render() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Header (logo + close)
+//  Header And Tabs (Top Bar)
 // ─────────────────────────────────────────────────────────────────────────────
-void ModMenu::renderHeader(float panW) {
+void ModMenu::renderHeaderAndTabs(float panW) {
     ImDrawList* dl  = ImGui::GetWindowDrawList();
     ImVec2      pos = ImGui::GetWindowPos();
 
-    // Header bg — subtle gradient via two rects
+    // 1. Header Row
     dl->AddRectFilled(pos, { pos.x+panW, pos.y+HDR_H }, kBg2, ROUND, ImDrawFlags_RoundCornersTop);
-    dl->AddLine({ pos.x, pos.y+HDR_H }, { pos.x+panW, pos.y+HDR_H }, kBorder, 1.f);
-
+    
     // Logo
-    ImGui::SetCursorPos({ 18.f, 14.f });
+    ImGui::SetCursorPos({ 20.f, 20.f });
     ImGui::PushStyleColor(ImGuiCol_Text, kv4Blurple);
+    ImGui::SetWindowFontScale(1.2f);
     ImGui::Text("GLACIER");
+    ImGui::SetWindowFontScale(1.0f);
     ImGui::PopStyleColor();
 
     ImGui::SameLine(0.f, 8.f);
-    ImVec2 vp = ImGui::GetCursorScreenPos();
+    ImGui::SetCursorPosY(24.f);
     ImGui::PushStyleColor(ImGuiCol_Text, kv4Grey);
     ImGui::TextUnformatted("v" GLACIER_VERSION);
     ImGui::PopStyleColor();
 
-    // Close button
-    ImGui::SetCursorPos({ panW - 42.f, 9.f });
+    // Close Button
+    ImGui::SetCursorPos({ panW - 46.f, 15.f });
     ImGui::PushStyleColor(ImGuiCol_Button,        { 0,0,0,0 });
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, { 0.8f,0.18f,0.18f,0.75f });
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  { 0.8f,0.18f,0.18f,1.f  });
@@ -163,64 +166,85 @@ void ModMenu::renderHeader(float panW) {
     if (ImGui::Button("X##close", { 30.f, 30.f })) m_open = false;
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(4);
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Category pill bar
-// ─────────────────────────────────────────────────────────────────────────────
-void ModMenu::renderCategoryBar(float panW) {
-    ImDrawList* dl  = ImGui::GetWindowDrawList();
-    ImVec2      pos = ImGui::GetWindowPos();
+    // 2. Tabs Row
     float barY = pos.y + HDR_H;
-
-    dl->AddRectFilled({ pos.x, barY }, { pos.x+panW, barY+CAT_H }, kBg2);
+    dl->AddRectFilled({ pos.x, barY }, { pos.x+panW, barY+CAT_H }, kBg1);
     dl->AddLine({ pos.x, barY+CAT_H }, { pos.x+panW, barY+CAT_H }, kBorder, 1.f);
 
-    float px = pos.x + 14.f;
-    float py = barY + (CAT_H - 24.f) * 0.5f;
-    bool  searching = m_searchBuf[0] != '\0';
+    float px = pos.x + 16.f;
+    float py = barY + (CAT_H - 30.f) * 0.5f;
 
     for (int i = 0; i < kCatCount; i++) {
-        bool active = !searching && m_activeCat == i;
-        float lw = ImGui::CalcTextSize(kCats[i].label).x * 12.f / ImGui::GetFontSize();
-        float pw = lw + 20.f;
-        ImVec2 pMin = { px, py }, pMax = { px+pw, py+24.f };
+        bool active = (m_activeCat == i && m_screen == Screen::Grid);
+        
+        float lw = ImGui::CalcTextSize(kCats[i].label).x;
+        float pw = lw + 24.f;
+        ImVec2 pMin = { px, py }, pMax = { px+pw, py+30.f };
 
         if (active) {
-            dl->AddRectFilled(pMin, pMax, kBlurple, 12.f);
+            dl->AddRectFilled(pMin, pMax, kBlurple, 15.f);
         } else {
-            dl->AddRectFilled(pMin, pMax, kBg1, 12.f);
-            dl->AddRect(pMin, pMax, IM_COL32(60,65,80,180), 12.f, 0, 1.f);
+            bool hovered = ImGui::IsMouseHoveringRect(pMin, pMax);
+            dl->AddRectFilled(pMin, pMax, hovered ? kBg3 : IM_COL32(0,0,0,0), 15.f);
         }
 
         ImVec2 ts = ImGui::CalcTextSize(kCats[i].label);
-        float  sc2 = 12.f / ImGui::GetFontSize();
-        dl->AddText(nullptr, 12.f,
-            { px + (pw - ts.x*sc2)*0.5f, py + (24.f - ts.y*sc2)*0.5f },
-            active ? kWhite : kGreyDim, kCats[i].label);
+        dl->AddText(nullptr, 14.f,
+            { px + (pw - ts.x)*0.5f, py + (30.f - ts.y)*0.5f },
+            active ? kWhite : kGrey, kCats[i].label);
 
         ImGui::SetCursorScreenPos(pMin);
-        ImGui::PushStyleColor(ImGuiCol_Button,        { 0,0,0,0 });
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, { 1,1,1,0.06f });
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  { 1,1,1,0.12f });
+        ImGui::PushStyleColor(ImGuiCol_Button, {0,0,0,0});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, {0,0,0,0});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, {0,0,0,0});
         char bid[16]; snprintf(bid,sizeof(bid),"##cat%d",i);
-        if (ImGui::Button(bid, { pw, 24.f })) m_activeCat = i;
+        if (ImGui::Button(bid, { pw, 30.f })) {
+            m_activeCat = i;
+            if (m_screen != Screen::Grid) {
+                m_screen = Screen::Grid;
+                m_transAlpha = 0.f;
+            }
+        }
         ImGui::PopStyleColor(3);
-        px += pw + 5.f;
+        px += pw + 8.f;
     }
 
-    // Search box on the right
-    float searchW = 160.f;
-    float sx = pos.x + panW - searchW - 14.f;
-    ImGui::SetCursorScreenPos({ sx, barY + (CAT_H - 22.f)*0.5f });
-    ImGui::PushStyleColor(ImGuiCol_FrameBg,        ImVec4(0.07f,0.07f,0.09f,1.f));
-    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered,  ImVec4(0.1f, 0.1f, 0.13f,1.f));
+    // Search Box
+    float searchW = 180.f;
+    float sx = pos.x + panW - searchW - 16.f;
+    ImGui::SetCursorScreenPos({ sx, barY + (CAT_H - 28.f)*0.5f });
+    ImGui::PushStyleColor(ImGuiCol_FrameBg,        ImVec4(0.06f,0.06f,0.08f,1.f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered,  ImVec4(0.09f,0.09f,0.11f,1.f));
     ImGui::PushStyleColor(ImGuiCol_Text,            kv4White);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.f);
     ImGui::SetNextItemWidth(searchW);
-    ImGui::InputTextWithHint("##srch", "Search modules...", m_searchBuf, sizeof(m_searchBuf));
+    // If we type in search, automatically go to grid view
+    if (ImGui::InputTextWithHint("##srch", "Search...", m_searchBuf, sizeof(m_searchBuf))) {
+        if (m_screen != Screen::Grid) {
+            m_screen = Screen::Grid;
+            m_transAlpha = 0.f;
+        }
+    }
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(3);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Toggle Switch Widget
+// ─────────────────────────────────────────────────────────────────────────────
+void ModMenu::renderToggleSwitch(float x, float y, bool active) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float width = 36.f;
+    float height = 20.f;
+    float radius = height * 0.5f;
+
+    ImU32 bgCol = active ? kBlurple : IM_COL32(50, 52, 60, 255);
+    dl->AddRectFilled({x, y}, {x + width, y + height}, bgCol, radius);
+
+    float knobRadius = radius - 2.f;
+    float knobX = active ? (x + width - knobRadius - 2.f) : (x + knobRadius + 2.f);
+    dl->AddCircleFilled({knobX, y + radius}, knobRadius, kWhite);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -229,132 +253,106 @@ void ModMenu::renderCategoryBar(float panW) {
 void ModMenu::renderModuleCard(ModuleBase* mod, float x, float y, float w, float h) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     bool  en = mod->isEnabled();
+    
+    // Hover logic
+    ImRect bb({x, y}, {x+w, y+h});
+    bool hov = ImGui::IsMouseHoveringRect(bb.Min, bb.Max);
 
     // Card background
-    ImU32 cardBg = en ? IM_COL32(22,24,30,255) : kBg1;
-    dl->AddRectFilled({ x, y }, { x+w, y+h }, cardBg, 10.f);
+    ImU32 cardBg = en ? IM_COL32(22,25,35,255) : (hov ? kBg3 : kBg2);
+    dl->AddRectFilled(bb.Min, bb.Max, cardBg, 12.f);
 
-    // Enabled: top glow strip
     if (en) {
         dl->AddRectFilledMultiColor(
-            { x, y }, { x+w, y+3.f },
+            bb.Min, { bb.Min.x+w, bb.Min.y+4.f },
             kBlurple, kBlurple,
             IM_COL32(114,137,218,0), IM_COL32(114,137,218,0));
-        // Bottom thin line
-        dl->AddRectFilled({ x, y+h-2.f }, { x+w, y+h }, kBlurpleDm, 0.f, ImDrawFlags_RoundCornersBottom);
     }
+    dl->AddRect(bb.Min, bb.Max, en ? IM_COL32(114,137,218,120) : kBorder, 12.f, 0, 1.2f);
 
-    dl->AddRect({ x, y }, { x+w, y+h }, en ? kBorderOn : kBorder, 10.f, 0, en ? 1.5f : 1.f);
+    // Layout
+    float iconSize = 40.f;
+    float pad = 14.f;
 
-    // ── Icon (texture) ────────────────────────────────────────────────────
-    float iconSize = 48.f;
-    float iconX = x + (w - iconSize) * 0.5f;
-    float iconY = y + 22.f;
-
+    // Header row: Icon & Toggle
     auto* srv = IconManager::get().getIcon(mod->getIconName());
     if (srv) {
-        // Tinted icon box
-        ImU32 tint = en ? IM_COL32(255,255,255,240) : IM_COL32(140,145,160,180);
+        ImU32 tint = en ? IM_COL32(255,255,255,255) : IM_COL32(140,145,160,200);
         dl->AddImage((ImTextureID)srv,
-            { iconX, iconY }, { iconX+iconSize, iconY+iconSize },
+            { x+pad, y+pad }, { x+pad+iconSize, y+pad+iconSize },
             { 0,0 }, { 1,1 }, tint);
     } else {
-        // Fallback colored tile
         ImU32 tileCol = en ? kBlurpleDm : IM_COL32(40,42,50,200);
-        dl->AddRectFilled({ iconX, iconY }, { iconX+iconSize, iconY+iconSize }, tileCol, 6.f);
+        dl->AddRectFilled({ x+pad, y+pad }, { x+pad+iconSize, y+pad+iconSize }, tileCol, 6.f);
     }
 
-    // ── Module name ───────────────────────────────────────────────────────
-    float nameY = y + h - 30.f;
-    ImVec2 nSz  = ImGui::CalcTextSize(mod->getName().c_str());
-    float  nFs  = 13.f;
-    float  nSc  = nFs / ImGui::GetFontSize();
-    shadow(dl, nFs, { x + (w - nSz.x*nSc)*0.5f, nameY },
-           mod->getName().c_str(), en ? kWhite : kGrey);
+    // Toggle switch hitbox
+    float togW = 36.f, togH = 20.f;
+    float togX = x + w - pad - togW;
+    float togY = y + pad;
+    ImRect togBb({togX, togY}, {togX+togW, togY+togH});
+    bool togHov = ImGui::IsMouseHoveringRect(togBb.Min, togBb.Max);
 
-    // Enabled dot
-    if (en) {
-        float dotX = x + (w - nSz.x*nSc)*0.5f - 9.f;
-        dl->AddCircleFilled({ dotX, nameY + nFs*nSc*0.5f }, 3.5f, kGreen);
+    renderToggleSwitch(togX, togY, en);
+
+    // Toggling interaction
+    ImGui::SetCursorScreenPos(togBb.Min);
+    char tid[64]; snprintf(tid,sizeof(tid),"##tog_%s",mod->getName().c_str());
+    ImGui::PushStyleColor(ImGuiCol_Button, {0,0,0,0});
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, {0,0,0,0.1f});
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, {0,0,0,0.2f});
+    if (ImGui::InvisibleButton(tid, {togW, togH})) {
+        mod->toggle();
     }
-
-    // ── Info button (top-left) ────────────────────────────────────────────
-    float btnR = 8.f;
-    ImVec2 infoC = { x + 13.f, y + 13.f };
-    bool infoHov = ImGui::IsMouseHoveringRect(
-        { infoC.x-btnR, infoC.y-btnR }, { infoC.x+btnR, infoC.y+btnR });
-    dl->AddCircleFilled(infoC, btnR, infoHov ? kBlurple : IM_COL32(40,42,50,200));
-    dl->AddText(nullptr, 10.f, { infoC.x - 2.f, infoC.y - 5.f }, kGrey, "i");
-
-    // ── Settings button (top-right) ───────────────────────────────────────
-    bool hasSet = !mod->settings().getDefs().empty();
-    ImVec2 gearC = { x + w - 13.f, y + 13.f };
-    bool gearHov = hasSet && ImGui::IsMouseHoveringRect(
-        { gearC.x-btnR, gearC.y-btnR }, { gearC.x+btnR, gearC.y+btnR });
-    if (hasSet) {
-        dl->AddCircleFilled(gearC, btnR, gearHov ? kBlurple : IM_COL32(40,42,50,200));
-        // Simple gear symbol via text
-        dl->AddText(nullptr, 9.f, { gearC.x - 4.f, gearC.y - 5.f }, kGrey, "*");
-    }
-
-    // ── Invisible click area ──────────────────────────────────────────────
-    ImGui::SetCursorScreenPos({ x, y });
-    char bid[96]; snprintf(bid,sizeof(bid),"##mc_%s",mod->getName().c_str());
-    ImGui::PushStyleColor(ImGuiCol_Button,        { 0,0,0,0 });
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, { 1,1,1,0.03f });
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  { 1,1,1,0.06f });
-    if (ImGui::Button(bid, { w, h })) {
-        ImVec2 mp = ImGui::GetIO().MousePos;
-        bool onInfo = ImGui::IsMouseHoveringRect({ infoC.x-btnR,infoC.y-btnR },{ infoC.x+btnR,infoC.y+btnR });
-        bool onGear = hasSet && ImGui::IsMouseHoveringRect({ gearC.x-btnR,gearC.y-btnR },{ gearC.x+btnR,gearC.y+btnR });
-        if (onInfo) {
-            m_selectedMod = mod;
-            m_screen      = Screen::Info;
-            m_transAlpha  = 0.f;
-        } else if (onGear) {
-            m_selectedMod = mod;
-            m_screen      = Screen::Settings;
-            m_transAlpha  = 0.f;
-        } else {
-            mod->toggle();
-        }
-    }
+    if (ImGui::IsItemClicked(0)) { /* Handled by InvisibleButton return */ }
     ImGui::PopStyleColor(3);
 
-    if (ImGui::IsItemHovered()) {
-        ImGui::BeginTooltip();
-        ImGui::PushStyleColor(ImGuiCol_Text, kv4Grey);
-        ImGui::TextWrapped("%s", mod->getDescription().c_str());
-        ImGui::PopStyleColor();
-        ImGui::EndTooltip();
+    // Module Name & Description
+    float textY = y + pad + iconSize + 10.f;
+    dl->AddText(nullptr, 16.f, { x+pad, textY }, en ? kWhite : kGrey, mod->getName().c_str());
+    
+    // Truncate desc if too long
+    std::string desc = mod->getDescription();
+    if (desc.size() > 45) desc = desc.substr(0, 42) + "...";
+    dl->AddText(nullptr, 13.f, { x+pad, textY + 22.f }, kGreyDim, desc.c_str());
+
+    // Card Interaction (Open settings)
+    ImGui::SetCursorScreenPos(bb.Min);
+    char cid[64]; snprintf(cid,sizeof(cid),"##card_%s",mod->getName().c_str());
+    // We cover the whole card, but since InvisibleButton for toggle was rendered earlier, 
+    // it will steal focus if hovered. Wait, Z-order: ImGui naturally resolves overlapping buttons 
+    // by evaluating last-rendered on top, so we should render Card Button FIRST, THEN toggle.
+    // However, it's safer to just do a mathematical check.
+    ImGui::InvisibleButton(cid, {w, h});
+    bool cardClicked = ImGui::IsItemClicked(0) || ImGui::IsItemClicked(1);
+    if (cardClicked && !togHov) { // Left or right click opens settings unless on toggle
+        m_selectedMod = mod;
+        m_screen = Screen::Settings;
+        m_transAlpha = 0.f;
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  GRID screen
+//  GRID Sub-Page
 // ─────────────────────────────────────────────────────────────────────────────
-void ModMenu::renderGrid() {
-    renderHeader(W);
-    renderCategoryBar(W);
+void ModMenu::renderGridSubPage() {
+    float contentY = HDR_H + CAT_H;
+    float contentH = H - contentY;
+    float cardW    = (W - GRID_PAD*2 - CARD_GAP*(COLS-1)) / COLS;
 
-    float gridTop = HDR_H + CAT_H;
-    float gridH   = H - gridTop;
-    float cardW   = (W - GRID_PAD*2 - CARD_GAP*(COLS-1)) / COLS;
-
-    ImGui::SetCursorPos({ 0.f, gridTop });
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { GRID_PAD, GRID_PAD });
-    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 5.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 6.f);
     ImGui::PushStyleColor(ImGuiCol_ScrollbarBg,          { 0,0,0,0 });
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab,         kv4Blurple);
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered,  kv4Blurple);
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive,   kv4White);
-    ImGui::BeginChild("##grid", { W, gridH }, false);
+    
+    ImGui::BeginChild("##grid", { W, contentH }, false);
 
     auto& mods = ModuleManager::get().getModules();
     const ModuleCategory cat = kCats[m_activeCat].cat;
     bool searching = m_searchBuf[0] != '\0';
     float scrollY  = ImGui::GetScrollY();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 wPos    = ImGui::GetWindowPos();
 
     int  col = 0;
@@ -363,12 +361,14 @@ void ModMenu::renderGrid() {
 
     for (auto& mp : mods) {
         ModuleBase* mod = mp.get();
-        bool matchCat  = searching || mod->getCategory() == cat;
+        bool matchCat  = mod->getCategory() == cat;
         bool matchSrch = containsCI(mod->getName(), m_searchBuf) ||
                          containsCI(mod->getDescription(), m_searchBuf);
-        if (!matchCat || !matchSrch) continue;
+        
+        if (searching && !matchSrch) continue;
+        if (!searching && !matchCat) continue;
+        
         any = true;
-
         float cx = wPos.x + rx;
         float cy = wPos.y + ry - scrollY;
         renderModuleCard(mod, cx, cy, cardW, CARD_H);
@@ -378,13 +378,13 @@ void ModMenu::renderGrid() {
         else rx += cardW + CARD_GAP;
     }
     if (col != 0) ry += CARD_H + CARD_GAP;
-    ImGui::SetCursorPos({ 0.f, ry });
+    ImGui::SetCursorPos({ 0.f, ry }); // Expand child bounds
 
     if (!any) {
         ImGui::PushStyleColor(ImGuiCol_Text, kv4Grey);
-        float tw = ImGui::CalcTextSize("No modules found").x;
+        float tw = ImGui::CalcTextSize("No modules found...").x;
         ImGui::SetCursorPos({ (W - tw)*0.5f, 60.f });
-        ImGui::TextUnformatted("No modules found");
+        ImGui::TextUnformatted("No modules found...");
         ImGui::PopStyleColor();
     }
 
@@ -394,189 +394,119 @@ void ModMenu::renderGrid() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Back button helper
+//  SETTINGS Sub-Page
 // ─────────────────────────────────────────────────────────────────────────────
-void ModMenu::renderBackButton(float x, float y) {
-    ImGui::SetCursorPos({ x, y });
-    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.07f,0.07f,0.09f,1.f));
+void ModMenu::renderSettingsSubPage() {
+    if (!m_selectedMod) { m_screen = Screen::Grid; return; }
+
+    float contentY = HDR_H + CAT_H;
+    float contentH = H - contentY;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 wPos = ImGui::GetWindowPos();
+    ModuleBase* mod = m_selectedMod;
+
+    // Background transition
+    dl->AddRectFilled({wPos.x, wPos.y + contentY}, {wPos.x + W, wPos.y + H}, kBg0, ROUND, ImDrawFlags_RoundCornersBottom);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 24.f, 20.f });
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 6.f);
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarBg,          { 0,0,0,0 });
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab,         kv4Blurple);
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive,   kv4White);
+    
+    ImGui::BeginChild("##settings_body", { W, contentH }, false);
+
+    // --- Profile Header ---
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.12f,0.12f,0.16f,1.f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kv4Blurple);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kv4White);
     ImGui::PushStyleColor(ImGuiCol_Text,          kv4White);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.f);
-    if (ImGui::Button("< Back##back", { 80.f, 28.f })) {
+    if (ImGui::Button("< Back", { 80.f, 32.f })) {
         m_screen     = Screen::Grid;
         m_transAlpha = 0.f;
     }
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(4);
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  SETTINGS screen
-// ─────────────────────────────────────────────────────────────────────────────
-void ModMenu::renderSettingsScreen() {
-    if (!m_selectedMod) { m_screen = Screen::Grid; return; }
+    ImGui::SameLine(0.f, 20.f);
 
-    ImDrawList* dl  = ImGui::GetWindowDrawList();
-    ImVec2      pos = ImGui::GetWindowPos();
-    ModuleBase* mod = m_selectedMod;
-
-    // Header
-    dl->AddRectFilled(pos, { pos.x+W, pos.y+HDR_H }, kBg2, ROUND, ImDrawFlags_RoundCornersTop);
-    dl->AddLine({ pos.x, pos.y+HDR_H }, { pos.x+W, pos.y+HDR_H }, kBorder, 1.f);
-
-    // Module icon
-    float iconSz = 30.f;
+    ImVec2 cp = ImGui::GetCursorPos();
     auto* srv = IconManager::get().getIcon(mod->getIconName());
-    if (srv) dl->AddImage((ImTextureID)srv, { pos.x+16.f, pos.y+11.f }, { pos.x+16.f+iconSz, pos.y+11.f+iconSz });
+    if (srv) {
+        ImGui::Image((ImTextureID)srv, {40.f, 40.f});
+        ImGui::SameLine(0.f, 15.f);
+    }
+    
+    ImGui::BeginGroup();
+    ImGui::PushStyleColor(ImGuiCol_Text, kv4White);
+    ImGui::SetWindowFontScale(1.3f);
+    ImGui::Text("%s", mod->getName().c_str());
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::PopStyleColor();
+    
+    ImGui::PushStyleColor(ImGuiCol_Text, kv4GreyDim);
+    ImGui::Text("%s", mod->getDescription().c_str());
+    ImGui::PopStyleColor();
+    ImGui::EndGroup();
 
-    // Title
-    shadow(dl, 16.f, { pos.x + 16.f + iconSz + 10.f, pos.y + 14.f }, mod->getName().c_str(), kWhite);
-    shadow(dl, 10.f, { pos.x + 16.f + iconSz + 10.f, pos.y + 32.f }, "Settings",            kGreyDim);
-
-    // Close
-    ImGui::SetCursorPos({ W - 42.f, 9.f });
-    ImGui::PushStyleColor(ImGuiCol_Button,        { 0,0,0,0 });
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, { 0.8f,0.18f,0.18f,0.75f });
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  { 0.8f,0.18f,0.18f,1.f  });
-    ImGui::PushStyleColor(ImGuiCol_Text,          kv4White);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.f);
-    if (ImGui::Button("X##cls2", { 30.f, 30.f })) m_open = false;
-    ImGui::PopStyleVar(); ImGui::PopStyleColor(4);
-
-    // Back button
-    renderBackButton(16.f, HDR_H + 10.f);
-
-    // Toggle enable / disable
-    {
-        float bx = 110.f, by = HDR_H + 10.f;
-        bool en = mod->isEnabled();
-        ImGui::SetCursorPos({ bx, by });
-        ImGui::PushStyleColor(ImGuiCol_Button,        en ? ImVec4(0.26f,0.71f,0.5f,0.8f) : ImVec4(0.2f,0.2f,0.25f,1.f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, en ? ImVec4(0.26f,0.71f,0.5f,1.f) : ImVec4(0.3f,0.3f,0.38f,1.f));
-        ImGui::PushStyleColor(ImGuiCol_Text,          kv4White);
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.f);
-        if (ImGui::Button(en ? "Enabled##tog" : "Disabled##tog", { 90.f, 28.f }))
-            mod->toggle();
-        ImGui::PopStyleVar(); ImGui::PopStyleColor(3);
+    // Toggle button right aligned
+    ImGui::SameLine(W - 24.f - 60.f - cp.x); // Alignment padding
+    ImGui::SetCursorPosY(cp.y + 4.f);
+    
+    bool en = mod->isEnabled();
+    ImVec2 togP = ImGui::GetCursorScreenPos();
+    renderToggleSwitch(togP.x + 20.f, togP.y, en);
+    
+    ImGui::SetCursorScreenPos({togP.x + 20.f, togP.y});
+    if (ImGui::InvisibleButton("##mastTog", {40.f, 20.f})) {
+        mod->toggle();
     }
 
-    // Content area
-    float contentY = HDR_H + 50.f;
-    float contentH = H - contentY;
-    ImGui::SetCursorPos({ 0.f, contentY });
+    ImGui::Spacing(); ImGui::Spacing();
+    
+    // Line separator
+    ImVec2 lp = ImGui::GetCursorScreenPos();
+    dl->AddLine(lp, { lp.x + W - 48.f, lp.y }, kBorder, 1.f);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 15.f);
 
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,  { 24.f, 16.f });
-    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize,   5.f);
-    ImGui::PushStyleColor(ImGuiCol_ScrollbarBg,          { 0,0,0,0 });
-    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab,         kv4Blurple);
-    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive,   kv4White);
-    ImGui::BeginChild("##settings_body", { W, contentH }, false);
-
+    // --- Settings List ---
     auto& defs = mod->settings().getDefs();
     if (defs.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, kv4Grey);
         ImGui::TextWrapped("This module has no configurable settings.");
         ImGui::PopStyleColor();
     } else {
-        for (auto& [key, def] : defs)
+        for (auto& [key, def] : defs) {
             renderSettingRow(key, const_cast<SettingDef&>(def), W - 48.f);
-        // Keybind row
-        ImGui::Spacing();
-        ImDrawList* dl2 = ImGui::GetWindowDrawList();
-        ImVec2 kp = ImGui::GetCursorScreenPos();
-        dl2->AddLine(kp, { kp.x + W - 48.f, kp.y }, kBorder, 1.f);
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 8.f);
-        ImGui::PushStyleColor(ImGuiCol_Text, kv4Grey);
-        ImGui::Text("Keybind");
-        ImGui::PopStyleColor();
-        ImGui::SameLine(0.f, 12.f);
-        ImGui::PushStyleColor(ImGuiCol_Text, kv4White);
-        ImGui::TextUnformatted(vkName(mod->getKey()));
-        ImGui::PopStyleColor();
+        }
     }
+
+    // Keybind
+    ImGui::Spacing();
+    ImVec2 kbp = ImGui::GetCursorScreenPos();
+    dl->AddLine(kbp, { kbp.x + W - 48.f, kbp.y }, kBorder, 1.f);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 15.f);
+
+    ImGui::PushStyleColor(ImGuiCol_Text, kv4Grey);
+    ImGui::Text("Keybind");
+    ImGui::PopStyleColor();
+    ImGui::SameLine(W - 48.f - 60.f);
+    
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.12f,0.12f,0.16f,1.f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f,0.15f,0.20f,1.f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kv4Blurple);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.f);
+    char kbtn[32]; snprintf(kbtn, sizeof(kbtn), "%s##kb", vkName(mod->getKey()));
+    if (ImGui::Button(kbtn, { 60.f, 24.f })) {
+        // Simple mock of binding logic for UI, actual logic might differ
+    }
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(3);
 
     ImGui::EndChild();
     ImGui::PopStyleColor(3);
     ImGui::PopStyleVar(2);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  INFO screen
-// ─────────────────────────────────────────────────────────────────────────────
-void ModMenu::renderInfoScreen() {
-    if (!m_selectedMod) { m_screen = Screen::Grid; return; }
-
-    ImDrawList* dl  = ImGui::GetWindowDrawList();
-    ImVec2      pos = ImGui::GetWindowPos();
-    ModuleBase* mod = m_selectedMod;
-
-    dl->AddRectFilled(pos, { pos.x+W, pos.y+HDR_H }, kBg2, ROUND, ImDrawFlags_RoundCornersTop);
-    dl->AddLine({ pos.x, pos.y+HDR_H }, { pos.x+W, pos.y+HDR_H }, kBorder, 1.f);
-
-    float iconSz = 30.f;
-    auto* srv = IconManager::get().getIcon(mod->getIconName());
-    if (srv) dl->AddImage((ImTextureID)srv, { pos.x+16.f, pos.y+11.f }, { pos.x+16.f+iconSz, pos.y+11.f+iconSz });
-    shadow(dl, 16.f, { pos.x+16.f+iconSz+10.f, pos.y+14.f }, mod->getName().c_str(),              kWhite);
-    shadow(dl, 10.f, { pos.x+16.f+iconSz+10.f, pos.y+32.f }, categoryName(mod->getCategory()), kGreyDim);
-
-    ImGui::SetCursorPos({ W-42.f, 9.f });
-    ImGui::PushStyleColor(ImGuiCol_Button,        { 0,0,0,0 });
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, { 0.8f,0.18f,0.18f,0.75f });
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  { 0.8f,0.18f,0.18f,1.f  });
-    ImGui::PushStyleColor(ImGuiCol_Text, kv4White);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.f);
-    if (ImGui::Button("X##cli2", { 30.f, 30.f })) m_open = false;
-    ImGui::PopStyleVar(); ImGui::PopStyleColor(4);
-
-    renderBackButton(16.f, HDR_H + 10.f);
-
-    float contentY = HDR_H + 50.f;
-    ImGui::SetCursorPos({ 0.f, contentY });
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 24.f, 16.f });
-    ImGui::BeginChild("##info_body", { W, H - contentY }, false);
-
-    // Large icon
-    if (srv) {
-        float bigSz = 64.f;
-        float ix = (W - bigSz) * 0.5f - 24.f;
-        ImGui::SetCursorPos({ ix, 10.f });
-        ImGui::Image((ImTextureID)srv, { bigSz, bigSz });
-        ImGui::Spacing(); ImGui::Spacing();
-    }
-
-    ImGui::PushStyleColor(ImGuiCol_Text, kv4White);
-    float tw = ImGui::CalcTextSize(mod->getName().c_str()).x;
-    ImGui::SetCursorPosX((W - tw - 48.f) * 0.5f);
-    ImGui::Text("%s", mod->getName().c_str());
-    ImGui::PopStyleColor();
-
-    ImGui::Spacing();
-    ImGui::PushStyleColor(ImGuiCol_Text, kv4Grey);
-    ImGui::TextWrapped("%s", mod->getDescription().c_str());
-    ImGui::PopStyleColor();
-
-    ImGui::Spacing(); ImGui::Spacing();
-
-    auto infoRow = [](const char* lbl, const char* val) {
-        ImGui::PushStyleColor(ImGuiCol_Text, kv4Grey);
-        ImGui::Text("%-14s", lbl);
-        ImGui::PopStyleColor();
-        ImGui::SameLine(0.f, 6.f);
-        ImGui::PushStyleColor(ImGuiCol_Text, kv4White);
-        ImGui::TextUnformatted(val);
-        ImGui::PopStyleColor();
-    };
-
-    infoRow("Category:", categoryName(mod->getCategory()));
-    infoRow("Status:",   mod->isEnabled() ? "Enabled" : "Disabled");
-    infoRow("Keybind:",  vkName(mod->getKey()));
-    char scBuf[16]; snprintf(scBuf,sizeof(scBuf),"%d",
-        (int)mod->settings().getDefs().size());
-    infoRow("Settings:", scBuf);
-
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -585,13 +515,6 @@ void ModMenu::renderInfoScreen() {
 void ModMenu::renderSettingRow(const std::string& key, SettingDef& def, float rowW) {
     ImGui::PushID(key.c_str());
 
-    // Section divider line
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImVec2 lp = ImGui::GetCursorScreenPos();
-    dl->AddLine(lp, { lp.x + rowW, lp.y }, kBorder, 0.6f);
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4.f);
-
-    // Label
     ImGui::PushStyleColor(ImGuiCol_Text, kv4Grey);
     ImGui::TextUnformatted(def.label.c_str());
     ImGui::PopStyleColor();
@@ -601,7 +524,7 @@ void ModMenu::renderSettingRow(const std::string& key, SettingDef& def, float ro
 
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.f);
     ImGui::PushStyleColor(ImGuiCol_FrameBg,          ImVec4(0.06f,0.06f,0.08f,1.f));
-    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered,   ImVec4(0.08f,0.08f,0.12f,1.f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered,   ImVec4(0.09f,0.09f,0.12f,1.f));
     ImGui::PushStyleColor(ImGuiCol_SliderGrab,        kv4Blurple);
     ImGui::PushStyleColor(ImGuiCol_SliderGrabActive,  kv4White);
     ImGui::PushStyleColor(ImGuiCol_CheckMark,         kv4Blurple);
@@ -625,6 +548,12 @@ void ModMenu::renderSettingRow(const std::string& key, SettingDef& def, float ro
 
     ImGui::PopStyleColor(5);
     ImGui::PopStyleVar();
+    
     ImGui::Spacing();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 lp = ImGui::GetCursorScreenPos();
+    dl->AddLine(lp, { lp.x + rowW, lp.y }, kBorder, 0.4f);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 8.f);
+    
     ImGui::PopID();
 }

@@ -6,6 +6,12 @@ A Minecraft Bedrock Edition (MCBE) DLL client — DirectX 11 + Dear ImGui.
 
 ## What's new in v2.0.0
 
+### Internal Client — No External Injector Required
+
+Glacier Client is now a fully **internal** DLL, launched and injected automatically by the
+[Glacier Launcher](https://github.com/Glacier-Client-BE/Glacier-Launcher).
+Font Awesome icons are embedded directly into the DLL binary — no external `.ttf` file needed.
+
 ### Redesigned Mod Menu (matches screenshot)
 
 The old sidebar-list layout is replaced by a **3-column icon-card grid** with four tabs:
@@ -93,6 +99,14 @@ All modules that need string settings (NickHider, AutoGG, Waypoints) now use the
 
 ---
 
+## Usage
+
+1. Download the [Glacier Launcher](https://github.com/Glacier-Client-BE/Glacier-Launcher)
+2. Press **Launch** — the launcher injects `glacier.dll` automatically
+3. Press **M** in-game to open the mod menu
+
+---
+
 ## Build
 
 Requires **Visual Studio 2022**, **CMake ≥ 3.20**, Windows SDK, x64.
@@ -104,7 +118,13 @@ cmake --build build --config Release
 
 Output → `build/Release/glacier.dll`
 
-Inject into `Minecraft.Windows.exe` with any x64 injector. Default menu key: **INSERT**.
+> Font Awesome 5 is automatically downloaded and **embedded** into the DLL at build time.
+> No external `.ttf` file is needed at runtime.
+
+To set a custom version (CI):
+```bat
+cmake -B build -A x64 -DGLACIER_VERSION=2.1.0
+```
 
 ---
 
@@ -125,7 +145,9 @@ src/
 │   └── impl/                34 module implementations
 ├── render/
 │   ├── ModMenu.cpp/h        Grid UI — Modules / Elements / Editors / Info
-│   └── Renderer.cpp/h       ImGui + DX11 atlas init
+│   └── Renderer.cpp/h       ImGui + DX11 atlas init (FA font embedded)
+├── icons/
+│   └── IconManager.cpp/h    WIC PNG loader + procedural fallback
 └── utils/
     ├── ClientConfig.h       Persistent JSON config
     ├── Logger.cpp/h         fmt-style logger
@@ -134,8 +156,19 @@ src/
 
 ---
 
+## CI / Releases
+
+The GitHub Actions workflow (`.github/workflows/release.yml`) automatically:
+- Determines the next version from commit message prefix (`hotfix:` / `update:`)
+- Builds the DLL with that version baked in
+- Creates a git tag + GitHub Release with auto-generated release notes
+- Triggers the Glacier Website repo to update
+
+---
+
 ## Credits
 - Dear ImGui — ocornut
 - MinHook — TsudaKageyu
 - Font Awesome 5 — fontawesome.com
 - Module concepts from Onix Client V2 (open-source)
+- Reference architecture inspired by [Flarial](https://github.com/flarialmc/dll-oss) & [Latite](https://github.com/LatiteClient/Latite)
