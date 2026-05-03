@@ -1,41 +1,59 @@
 #include "HookManager.h"
-#include "../utils/Logger.h"
+#include "../core/Logger.h"
+#include <MinHook.h>
+
+namespace Glacier {
 
 HookManager& HookManager::get() {
-    static HookManager instance;
-    return instance;
+    static HookManager M;
+    return M;
 }
 
-bool HookManager::init() {
-    MH_STATUS status = MH_Initialize();
-    if (status != MH_OK) {
-        Logger::error("MH_Initialize failed: {}", MH_StatusToString(status));
+HookManager::~HookManager() { shutdown(); }
+
+bool HookManager::initialize() {
+    if (initialized_) return true;
+    auto r = MH_Initialize();
+    if (r != MH_OK && r != MH_ERROR_ALREADY_INITIALIZED) {
+        Logger::get().error("Hook", "MH_Initialize failed: ", static_cast<int>(r));
         return false;
     }
-    Logger::info("HookManager initialized");
+    initialized_ = true;
     return true;
 }
 
 void HookManager::shutdown() {
-    disableAll();
+    if (!initialized_) return;
+    MH_DisableHook(MH_ALL_HOOKS);
     MH_Uninitialize();
-    m_hooks.clear();
+    targets_.clear();
+    initialized_ = false;
 }
 
-bool HookManager::install(void* target, void* detour, void** original) {
-    MH_STATUS status = MH_CreateHook(target, detour, original);
-    if (status != MH_OK) {
-        Logger::error("MH_CreateHook failed: {}", MH_StatusToString(status));
+bool HookManager::create(const std::string& key, void* target, void* detour, void** original) {
+    if (!initialized_ && !initialize()) return false;
+    auto r = MH_CreateHook(target, detour, original);
+    if (r != MH_OK) {
+        Logger::get().error("Hook", "Create failed (", key, "): ", static_cast<int>(r));
         return false;
     }
-    m_hooks.push_back({ target, detour, original });
+    targets_[key] = target;
     return true;
 }
 
-void HookManager::enableAll() {
-    MH_EnableHook(MH_ALL_HOOKS);
+bool HookManager::enable(const std::string& key) {
+    auto it = targets_.find(key);
+    if (it == targets_.end()) return false;
+    return MH_EnableHook(it->second) == MH_OK;
 }
 
-void HookManager::disableAll() {
-    MH_DisableHook(MH_ALL_HOOKS);
+bool HookManager::disable(const std::string& key) {
+    auto it = targets_.find(key);
+    if (it == targets_.end()) return false;
+    return MH_DisableHook(it->second) == MH_OK;
 }
+
+bool HookManager::enableAll()  { return MH_EnableHook(MH_ALL_HOOKS)  == MH_OK; }
+bool HookManager::disableAll() { return MH_DisableHook(MH_ALL_HOOKS) == MH_OK; }
+
+} // namespace Glacier

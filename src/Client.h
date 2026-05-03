@@ -1,22 +1,26 @@
 #pragma once
-#include <Windows.h>
+//
+// Top-level glue. Owns: Logger lifecycle, Hook init, Renderer init, default
+// module registration, Config load/save. Lifetime: from DllMain attach to
+// detach (or explicit Eject).
+//
+#include <atomic>
+
+namespace Glacier {
 
 class Client {
 public:
     static Client& get();
 
-    void init(HMODULE hModule);
-    void shutdown();
+    void start();   // Called once from the bootstrap thread in dllmain.
+    void stop();    // Disable hooks, save config.
 
-    bool    isRunning() const { return m_running; }
-    HMODULE getModule() const { return m_module;  }
+    [[nodiscard]] bool running() const { return running_.load(); }
 
 private:
     Client() = default;
-    ~Client() = default;
-    Client(const Client&) = delete;
-    Client& operator=(const Client&) = delete;
-
-    HMODULE m_module  = nullptr;
-    bool    m_running = false;
+    std::atomic<bool> running_{ false };
+    void registerModules();
 };
+
+} // namespace Glacier

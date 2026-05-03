@@ -1,87 +1,115 @@
 #include "Client.h"
+#include "core/Glacier.h"
+#include "core/Logger.h"
+#include "core/Util.h"
+#include "events/EventBus.h"
+#include "events/Events.h"
 #include "hooks/HookManager.h"
-#include "hooks/SwapChainHook.h"
-#include "modules/ModuleManager.h"
+#include "hooks/render/SwapChainHook.h"
+#include "hooks/render/WndProcHook.h"
 #include "render/Renderer.h"
-#include "utils/Logger.h"
-#include "utils/ClientConfig.h"
-#include "utils/SigScanner.h"
-#include "sdk/ClientInstance.h"
-#include <thread>
-#include <chrono>
+#include "modules/ModuleManager.h"
+#include "config/Config.h"
+#include "sdk/Addresses.h"
+#include "gui/ClickGui.h"
 
-Client& Client::get() { static Client i; return i; }
+#include "modules/hud/Watermark.h"
+#include "modules/hud/FPSCounter.h"
+#include "modules/hud/Coordinates.h"
+#include "modules/hud/Keystrokes.h"
+#include "modules/hud/CPS.h"
+#include "modules/hud/ArmorHUD.h"
+#include "modules/hud/ClientBranding.h"
+#include "modules/hud/PlayerList.h"
 
-static void resolveSDKPointers() {
-    // ── ClientInstance ────────────────────────────────────────────────────────
-    // Pattern: "48 8B 05 ?? ?? ?? ?? 48 85 C0 74 ?? 48 8B 80 ?? ?? ?? ??"
-    uintptr_t addr = SigScanner::scan(
-        "48 8B 05 ?? ?? ?? ?? 48 85 C0 74 ?? 48 8B 80 ?? ?? ?? ??");
-    if (addr) {
-        uintptr_t ptrAddr = SigScanner::resolveRip(addr, 3, 7);
-        ClientInstance::instancePtr() = *reinterpret_cast<ClientInstance**>(ptrAddr);
-        Logger::info("ClientInstance resolved at 0x{:X}", ptrAddr);
-    } else {
-        Logger::warn("ClientInstance sig not found — SDK calls will be no-ops");
-    }
+#include "modules/visual/Crosshair.h"
+#include "modules/visual/ChunkBorders.h"
+#include "modules/visual/BlockOutline.h"
+#include "modules/visual/Fullbright.h"
+#include "modules/visual/Zoom.h"
+#include "modules/visual/FreeLook.h"
+#include "modules/visual/NoHurtCam.h"
 
-    // ── Options ───────────────────────────────────────────────────────────────
-    // Pattern for Options singleton (gamma/FOV owner)
-    uintptr_t optsAddr = SigScanner::scan(
-        "48 8B 0D ?? ?? ?? ?? 48 85 C9 74 ?? F3 0F 11 81");
-    if (optsAddr) {
-        uintptr_t ptrAddr = SigScanner::resolveRip(optsAddr, 3, 7);
-        Options::instancePtr() = *reinterpret_cast<Options**>(ptrAddr);
-        Logger::info("Options resolved at 0x{:X}", ptrAddr);
-    }
+#include "modules/misc/AutoGG.h"
+#include "modules/misc/AutoText.h"
+#include "modules/misc/TimeChanger.h"
+#include "modules/misc/ToggleSprintSneak.h"
+
+namespace Glacier {
+
+Client& Client::get() {
+    static Client C;
+    return C;
 }
 
-void Client::init(HMODULE hModule) {
-    m_module  = hModule;
-    m_running = true;
+void Client::start() {
+    if (running_.exchange(true)) return;
 
-    Logger::init();
-    Logger::info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    Logger::info("  Glacier Client v{}  ", GLACIER_VERSION);
-    Logger::info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    auto logPath = Util::appDataPath() + L"\\glacier.log";
+    Logger::get().open(logPath);
+    Logger::get().info("Boot", "Glacier ", Glacier::kVersion, " - ", Util::wideToUtf8(logPath));
 
-    ClientConfig::get().init(hModule);
+    sdk::Addresses::get().resolve();
 
-    if (!HookManager::get().init()) {
-        Logger::error("HookManager failed — aborting");
-        shutdown();
+    if (!HookManager::get().initialize()) {
+        Logger::get().error("Boot", "MinHook init failed");
+        running_ = false;
         return;
     }
 
-    // Resolve SDK pointers before initialising modules
-    resolveSDKPointers();
-
-    ModuleManager::get().init();
-
-    if (!SwapChainHook::get().init()) {
-        Logger::error("SwapChainHook failed — aborting");
-        shutdown();
+    if (!SwapChainHook::get().install()) {
+        Logger::get().error("Boot", "SwapChain hook install failed");
+        running_ = false;
         return;
     }
 
-    Logger::info("Ready.  [{} ] = menu   [END] = unload",
-                 static_cast<char>(ClientConfig::get().menuKey));
+    registerModules();
+    Config::get().load();
 
-    while (m_running) {
-        if (GetAsyncKeyState(VK_END) & 1) shutdown();
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
+    // Register the click-GUI as an event listener.
+    ClickGui::get().init();
+
+    Logger::get().info("Boot", "Startup complete");
 }
 
-void Client::shutdown() {
-    if (!m_running) return;
-    m_running = false;
-    Logger::info("Glacier Client shutting down…");
-    SwapChainHook::get().shutdown();
-    ModuleManager::get().shutdown();
-    Renderer::get().shutdown();
+void Client::stop() {
+    if (!running_.exchange(false)) return;
+    Logger::get().info("Boot", "Shutting down");
+    Config::get().save();
+    HookManager::get().disableAll();
+    SwapChainHook::get().uninstall();
+    WndProcHook::get().uninstall();
     HookManager::get().shutdown();
-    Logger::info("Goodbye.");
-    Logger::shutdown();
-    FreeLibraryAndExitThread(m_module, 0);
+    Logger::get().close();
 }
+
+void Client::registerModules() {
+    auto& M = ModuleManager::get();
+
+    // HUD
+    M.add<modules::Watermark>();
+    M.add<modules::FPSCounter>();
+    M.add<modules::Coordinates>();
+    M.add<modules::Keystrokes>();
+    M.add<modules::CPSCounter>();
+    M.add<modules::ArmorHUD>();
+    M.add<modules::ClientBranding>();
+    M.add<modules::PlayerList>();
+
+    // Visual
+    M.add<modules::Crosshair>();
+    M.add<modules::ChunkBorders>();
+    M.add<modules::BlockOutline>();
+    M.add<modules::Fullbright>();
+    M.add<modules::Zoom>();
+    M.add<modules::FreeLook>();
+    M.add<modules::NoHurtCam>();
+
+    // Misc
+    M.add<modules::AutoGG>();
+    M.add<modules::AutoText>();
+    M.add<modules::TimeChanger>();
+    M.add<modules::ToggleSprintSneak>();
+}
+
+} // namespace Glacier
