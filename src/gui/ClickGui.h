@@ -24,7 +24,7 @@ private:
     void onRender(RenderImGuiEvent& e);
 
     bool        open_           = false;
-    int         openKey_        = 0x2D;   // VK_INSERT
+    int         openKey_        = 'G';    // 0x47 - 'G' for Glacier
     Category    activeCategory_ = Category::HUD;
     std::string filter_;
 };
