@@ -162,11 +162,24 @@ category, persists to JSON, and binds to `'M'` as a toggle key.
 
 ## Wiring up real game state
 
-`src/sdk/Addresses.cpp` is the single source of game-version-specific offsets.
-Until you fill in the `Util::patternScan(...)` calls there, `Game::get().*`
-accessors return `std::nullopt` and dependent modules render placeholder
-content. Modules that don't need SDK pointers (Watermark, FPS, Keystrokes,
-CPS, Crosshair, Zoom, FreeLook input, AutoText, AutoGG-trigger detection,
+[`src/sdk/Addresses.cpp`](src/sdk/Addresses.cpp) is the single source of
+game-version-specific offsets. The current sig table is **ported verbatim
+from [LatiteClient/Latite](https://github.com/LatiteClient/Latite)**
+(`src/mc/Addresses.h`, master, fetched 2026-05-03) — ~50 patterns covering
+globals, components, vtables and functions for the matching Bedrock build.
+
+Three resolver shapes are supported via macros:
+* `RES_RES(field, pattern)` — store the match address as-is (function bodies, jcc patch sites).
+* `RES_DEREF(field, off, pattern)` — resolve a RIP-relative pointer at `match+off` (vtable LEAs, RIP-rel32 globals, `E8` call targets with `off=1`).
+* `RES_REF(field, off, pattern)` — read the 4-byte literal at `match+off` (struct field offsets baked into instructions).
+
+Logger reports `hits` vs `misses` after `resolve()`. Any miss when running on
+a different game build means that pattern needs refreshing — replace its
+string and rebuild.
+
+`Game::get().*` accessors short-circuit while the typed call wrappers are
+TODO. Modules that don't need SDK pointers (Watermark, FPS, Keystrokes, CPS,
+Crosshair, Zoom, FreeLook input, AutoText, AutoGG-trigger detection,
 ClickGui, Theme) work immediately.
 
 ## Status

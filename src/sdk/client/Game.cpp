@@ -9,16 +9,27 @@ Game& Game::get() {
 }
 
 // All accessors short-circuit while the addresses are unresolved.
+//
+// Latite reaches ClientInstance via MinecraftGame -> getPrimaryClientInstance,
+// then LocalPlayer / Level off ClientInstance. Until those struct offsets are
+// reverse-engineered into typed accessors, every getter returns nullopt and
+// modules treat the absence as "not in-game".
+//
 ClientInstance* Game::clientInstance() const {
     auto& A = Addresses::get();
-    if (!A.ready() || !A.clientInstance) return nullptr;
-    // *(ClientInstance**)A.clientInstance after RE - returning nullptr for now.
+    if (!A.ready() || !A.misc.MinecraftGame || !A.fn.getPrimaryClient) return nullptr;
+    // (*(ClientInstance*(__fastcall**)(MinecraftGame*))A.fn.getPrimaryClient)(*A.misc.MinecraftGame)
+    // once the typed call is wired. nullptr until then.
     return nullptr;
 }
 
 LocalPlayer*  Game::localPlayer() const { return nullptr; }
 Level*        Game::level()       const { return nullptr; }
-Minecraft*    Game::minecraft()   const { return nullptr; }
+Minecraft*    Game::minecraft()   const {
+    auto& A = Addresses::get();
+    if (!A.ready() || !A.misc.MinecraftGame) return nullptr;
+    return reinterpret_cast<Minecraft*>(*static_cast<void**>(A.misc.MinecraftGame));
+}
 
 std::optional<Vec3>  Game::playerPos()      const { return std::nullopt; }
 std::optional<Vec3>  Game::playerVelocity() const { return std::nullopt; }
