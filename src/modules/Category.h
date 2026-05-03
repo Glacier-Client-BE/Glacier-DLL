@@ -27,4 +27,4 @@ constexpr std::string_view kCategoryName(Category c) {
 
 constexpr int kCategoryCount = static_cast<int>(Category::_Count);
 
-} // namespace Glacier
+}
