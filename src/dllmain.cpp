@@ -14,7 +14,7 @@ static DWORD WINAPI shutdown(LPVOID) {
     return 0;
 }
 
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved) {
     switch (reason) {
         case DLL_PROCESS_ATTACH:
             DisableThreadLibraryCalls(hModule);
@@ -22,8 +22,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
             CreateThread(nullptr, 0, bootstrap, nullptr, 0, nullptr);
             break;
         case DLL_PROCESS_DETACH:
-            // Best-effort sync stop (we may already be unloading).
-            Glacier::Client::get().stop();
+            // Skip cleanup on process termination - loader lock is held and
+            // most subsystems are already torn down. Only run stop() when the
+            // DLL is unloaded explicitly (lpReserved == NULL).
+            if (lpReserved == nullptr) Glacier::Client::get().stop();
             break;
     }
     return TRUE;

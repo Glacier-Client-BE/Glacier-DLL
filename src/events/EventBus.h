@@ -10,10 +10,12 @@
 //
 #include "Event.h"
 #include <typeindex>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 #include <shared_mutex>
 #include <utility>
+#include <algorithm>
 
 namespace Glacier {
 
