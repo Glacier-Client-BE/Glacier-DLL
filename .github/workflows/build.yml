@@ -75,8 +75,19 @@ jobs:
             $url = "https://$name$domain/$name-$rev-win-x64.7z"
             Write-Host "Downloading $url"
             Invoke-WebRequest -Uri $url -OutFile "$name.7z"
-            # All four archives share the include/ lib/ bin/ layout and merge cleanly.
-            7z x "$name.7z" -o"$sdk" -y | Out-Null
+            # The archives conflict on LICENSE (folder in one, plain file in
+            # another), so extract to a scratch dir and merge only the SDK
+            # payload (include/ lib/ bin/) instead of unpacking in place.
+            $tmp = "ul-tmp-$name"
+            7z x "$name.7z" -o"$tmp" -y | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "7z extraction failed for $name" }
+            foreach ($dir in "include", "lib", "bin") {
+              if (Test-Path "$tmp/$dir") {
+                New-Item -ItemType Directory -Force -Path "$sdk/$dir" | Out-Null
+                Copy-Item -Path "$tmp/$dir/*" -Destination "$sdk/$dir" -Recurse -Force
+              }
+            }
+            Remove-Item -Recurse -Force $tmp
           }
           Write-Host "Assembled SDK libs:"
           Get-ChildItem "$sdk/lib" | Select-Object -ExpandProperty Name
