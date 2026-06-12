@@ -80,7 +80,6 @@ jobs:
           }
           Write-Host "Assembled SDK libs:"
           Get-ChildItem "$sdk/lib" | Select-Object -ExpandProperty Name
-        shell: pwsh
 
       # ── Build ──────────────────────────────────────────────────────────────
       - name: Build Glacier.dll
