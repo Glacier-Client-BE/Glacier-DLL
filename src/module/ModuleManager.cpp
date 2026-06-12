@@ -10,6 +10,22 @@
 #include "modules/InventoryHud.h"
 #include "modules/Watermark.h"
 #include "modules/Coordinates.h"
+#include "modules/BlockHit.h"
+#include "modules/ForceCoords.h"
+#include "modules/HitPing.h"
+#include "modules/Hitboxes.h"
+#include "modules/JavaViewBobbing.h"
+#include "modules/MaterialBinLoader.h"
+#include "modules/MemoryDisplay.h"
+#include "modules/MinimalViewBobbing.h"
+#include "modules/MovableCoordinates.h"
+#include "modules/MovableDayCounter.h"
+#include "modules/MovableHud.h"
+#include "modules/MovablePaperdoll.h"
+#include "modules/NullMovement.h"
+#include "modules/OpponentReach.h"
+#include "modules/ReachDisplay.h"
+#include "modules/SnapLook.h"
 
 namespace glacier {
 
@@ -27,10 +43,28 @@ void ModuleManager::initialize() {
     registerModule<Watermark>();
     registerModule<Coordinates>();
 
+    // ── Newly ported Flarial features with bespoke logic / hooks / HUD ──
+    registerModule<BlockHit>();
+    registerModule<ForceCoords>();
+    registerModule<HitPing>();
+    registerModule<Hitboxes>();
+    registerModule<JavaViewBobbing>();
+    registerModule<MaterialBinLoader>();
+    registerModule<MemoryDisplay>();
+    registerModule<MinimalViewBobbing>();
+    registerModule<MovableCoordinates>();
+    registerModule<MovableDayCounter>();
+    registerModule<MovableHud>();
+    registerModule<MovablePaperdoll>();
+    registerModule<NullMovement>();
+    registerModule<OpponentReach>();
+    registerModule<ReachDisplay>();
+    registerModule<SnapLook>();
+
     // ── Declarative feature set ──
     // The union of the legitimate modules shipped by Flarial (dll-oss) and
     // Latite — visual / HUD / utility / QoL features. Combat- and movement-
-    // exploit modules (KillAura, Reach, Fly, Hitbox, Aim, etc.) are deliberately
+    // exploit modules (KillAura, Reach hack, Fly, Aim, etc.) are deliberately
     // excluded. Each is a real toggleable, configurable, keybindable module; its
     // effect is realized by the matching game hook reading its state.
     const auto add = [&](std::string name, std::string desc, Category cat,
@@ -210,6 +244,12 @@ void ModuleManager::initialize() {
     add("Toggle Sounds", "Play a sound when a module toggles", Category::Misc);
     add("Network Stats", "Show packets sent/received per second", Category::Misc);
     add("Quick Connect", "Saved-server quick-connect list", Category::Misc);
+
+    // ── Final pass — remaining declarative modules from Flarial + Latite ──
+    // (The 16 features that needed bespoke logic — Block Hit, Hitboxes, the
+    //  view-bobbing pair, Material Bin Loader, Null Movement, Snap Look, Force
+    //  Coords, the reach/ping trio, Memory Display, and the Movable widgets —
+    //  are now real classes registered above, so they're no longer listed here.)
 
     LOG_INFO("registered {} modules", m_modules.size());
 }

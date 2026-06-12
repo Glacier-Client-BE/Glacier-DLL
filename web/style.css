@@ -712,6 +712,79 @@ input[type=range]::-webkit-slider-thumb:hover {
     text-shadow: 0 1px 2px #000, 0 0 2px #000;
 }
 
+/* ── Free-positioned text panel (Movable Coordinates / Day Counter) ── */
+.hud-panel {
+    position: absolute;
+    transform-origin: top left;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+}
+
+/* ── Paper doll (Movable Paperdoll) ── */
+.hud-paperdoll {
+    position: absolute;
+    width: 60px;
+    height: 110px;
+    transform-origin: top left;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px;
+    border-radius: var(--r-sm);
+    background: color-mix(in srgb, var(--bg-panel) 60%, transparent);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+.hud-paperdoll.inactive { opacity: 0.35; }
+.hud-paperdoll .pd-head {
+    width: 20px; height: 20px; border-radius: 4px;
+    background: var(--accent);
+}
+.hud-paperdoll .pd-torso {
+    position: relative; width: 24px; height: 30px; margin-top: 3px;
+    border-radius: 3px; background: color-mix(in srgb, var(--accent) 70%, #fff 0%);
+}
+.hud-paperdoll .pd-arm {
+    position: absolute; top: 0; width: 7px; height: 28px; border-radius: 3px;
+    background: color-mix(in srgb, var(--accent) 55%, #000 0%);
+}
+.hud-paperdoll .pd-arm.l { left: -9px; }
+.hud-paperdoll .pd-arm.r { right: -9px; }
+.hud-paperdoll .pd-legs { display: flex; gap: 2px; margin-top: 3px; }
+.hud-paperdoll .pd-leg {
+    width: 10px; height: 26px; border-radius: 3px;
+    background: color-mix(in srgb, var(--accent) 40%, #000 0%);
+}
+
+/* ── Crosshair-centred transient effects (Block Hit / Hit Ping / Hitboxes) ── */
+.xhair-fx {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 2;
+}
+.xhair-pulse {
+    border-radius: 50%;
+    border: 2px solid #fff;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
+}
+.xhair-hitbox {
+    border: 2px solid #fff;
+    border-radius: 3px;
+    box-shadow: 0 0 5px rgba(0, 0, 0, 0.7);
+}
+.xhair-popup {
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 3px #000, 0 0 3px #000;
+    white-space: nowrap;
+}
+
 /* ── Menu wrapper ── */
 .glacier-menu { position: absolute; inset: 0; z-index: 10; }
 .glacier-menu[hidden] { display: none; }

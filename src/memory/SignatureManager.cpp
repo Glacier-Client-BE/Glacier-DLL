@@ -72,6 +72,54 @@ void SignatureManager::seedBedrock() {
     addSignature("Inventory::addItem",
         "48 89 74 24 ? 57 48 83 EC ? 48 8B 81 ? ? ? ? 48 8B F2 48 8B F9 48 85 C0 74 ? 80 B8");
 
+    // GameMode::attack — hooked for attack/reach instrumentation (Hit Ping,
+    // Reach Display). Detour shape is (GameMode*, Actor*, bool) on >= 1.21.50.
+    // Last defined for 1.21.90, carried to 1.26.
+    addSignature("GameMode::attack",
+        "48 89 ? ? ? 48 89 ? ? ? 48 89 ? ? ? 55 41 ? 41 ? 41 ? 41 ? 48 8D ? ? ? ? ? ? 48 81 EC ? ? ? ? 48 8B ? ? ? ? ? 48 33 ? 48 89 ? ? ? ? ? 45 0F ? ? 4C 8B ? 48 8B ? 45 33 ? 44 89");
+
+    // RakPeer::GetAveragePing — hooked to cache the live server RTT whenever the
+    // game queries it. Last defined for 1.21.130, carried to 1.26.
+    addSignature("RakPeer::GetAveragePing",
+        "48 8B C4 55 48 8D 6C 24 ? 48 81 EC ? ? ? ? 0F 10 4A ? 4C 8B 1A 4C 3B 1D ? ? ? ? 0F 10 42 ? 48 89 58 ? 48 8B D9 0F 10 52 ? 0F 10 5A ? 0F 10 62 ? 0F 10 6A ? 0F 29 70 ? 0F 10 72 ? 0F 29 78 ? 0F B7 82 ? ? ? ? 0F 10 BA ? ? ? ? 66 89 45 ? 0F B7 82 ? ? ? ? 66 89 45 ? 0F 11 4C 24 ? 74 ? 44 8B 49");
+
+    // Camera bob matrix builder ("BobHurt") — hooked so view-bobbing modules can
+    // inject a hand/camera translation. (void* self, glm::mat4* m). 1.21.120+.
+    addSignature("BobHurt",
+        "48 89 5C 24 ? 57 48 81 EC ? ? ? ? 0F 29 7C 24");
+
+    // Minimal View Bobbing patch site — NOPing the 6-byte indirect call removes
+    // the bob contribution entirely. Last defined for 1.21.110, carried to 1.26.
+    addSignature("MinimalViewBobbing",
+        "FF 15 ? ? ? ? 80 7C 24 ? ? 0F 84 ? ? ? ? F3 0F 10 4C 24 ? 0F 29 B4 24");
+
+    // Server "show coordinates" gamerule check: `cmp byte [rax+x],y / setne al`.
+    // Force Coords patches the setne into `mov al,1`. 1.20.30, carried forward.
+    addSignature("ForceCoordsOption",
+        "80 78 ? ? 0F 95 C0 48 8B 5C 24");
+
+    // AppPlatform::readAssetFile — hooked by Material Bin Loader to substitute
+    // *.material.bin contents with user-provided shader packs. 1.21.120+.
+    addSignature("AppPlatform::readAssetFile",
+        "48 89 5C 24 ? 48 89 74 24 ? 48 89 7C 24 ? 55 41 56 41 57 48 8D AC 24 ? ? ? ? 48 81 EC ? ? ? ? 48 8B 05 ? ? ? ? 48 33 C4 48 89 85 ? ? ? ? 48 8B F2 48 89 55");
+
+    // LocalPlayer::applyTurnDelta(Vec2<float>& {pitch, yaw}) — hooked for its
+    // trampoline so Snap Look can apply camera turns on the game thread. 1.26.
+    addSignature("LocalPlayer::applyTurnDelta",
+        "48 8b c4 48 89 58 ? 48 89 70 ? 48 89 78 ? 55 41 54 41 55 41 56 41 57 48 8d 68 ? 48 81 ec ? ? ? ? 0f 29 70 ? 0f 29 78 ? 44 0f 29 40 ? 44 0f 29 48 ? 44 0f 29 50 ? 44 0f 29 98 ? ? ? ? 48 8b 05 ? ? ? ? 48 33 c4 48 89 45 ? 4c 8b ea");
+
+    // Time-of-day computation (`time % 24000` helper) — hooked read-only so the
+    // Day Counter can derive the absolute world time. 1.21.130, carried to 1.26.
+    addSignature("TimeChanger",
+        "44 8B C2 B8 ? ? ? ? F7 EA");
+
+    // Level::getRuntimeActorList() -> std::vector<Actor*> — the game's own
+    // thread-safe actor enumerator, called for entity Hitboxes. (Iterating the
+    // EnTT registry directly races the server thread on 1.26 and crashes, so we
+    // use the engine function exactly as Flarial does.) Effective 1.21.110→1.26.
+    addSignature("Level::getRuntimeActorList",
+        "48 89 5C 24 ? 55 56 57 48 83 EC ? 48 8B F2 48 89 54 24 ? 33 D2");
+
     // ── Offsets ──
     // Carried from 1.21.13x and NOT overridden by init260 → valid for 1.26.x.
     addOffset("ClientInstance::minecraftGame", 0x1A0);
@@ -98,6 +146,23 @@ void SignatureManager::seedBedrock() {
     addOffset("PlayerInventory::selectedSlot", 0x10);
     addOffset("Actor::armorContainer",    0x1670);
     addOffset("Actor::position",          0x44);
+
+    // GameMode -> owning Player (stable since 1.20.30).
+    addOffset("Gamemode::player",         0x8);
+
+    // ── World-to-screen projection chain (entity Hitboxes) ──
+    // GameRenderer holds the per-frame camera matrices at fixed slots.
+    addOffset("GameRenderer::viewMatrix", 0x358);
+    addOffset("GameRenderer::projMatrix", 0x3D8);
+    // ClientInstance::getLevelRenderer is a *virtual* call on >= 1.21.120; this
+    // is the vtable index (not a byte offset).
+    addOffset("ClientInstance::getLevelRendererVIndex", 187);
+    addOffset("LevelRenderer::levelRendererPlayer", 0x430);
+    addOffset("LevelRendererPlayer::cameraPos",      0x704);
+    // GuiData carries the render-target pixel size used for the NDC→screen map.
+    addOffset("GuiData::screenSize",      0x40);
+    // Actor -> owning Level (carried from 1.21.50, not overridden through 1.26).
+    addOffset("Actor::level",             0x1D8);
 }
 
 } // namespace glacier::memory

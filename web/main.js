@@ -90,18 +90,165 @@
 
     function renderHud(huds) {
         const seenText = new Set();
+        const seenPanel = new Set();
         let armor = null, inventory = null;
+        let hudConfig = null;
+        const overlays = [];   // transient crosshair effects (pulse/popup)
+        let paperdoll = null;
+        let hitbox3d = null;
 
         for (const w of huds) {
-            if (w.type === "text") { renderTextWidget(w); seenText.add(w.id); }
-            else if (w.type === "armor")     armor = w;
-            else if (w.type === "inventory") inventory = w;
+            switch (w.type) {
+                case "text":      renderTextWidget(w); seenText.add(w.id); break;
+                case "panel":     renderPanelWidget(w); seenPanel.add(w.id); break;
+                case "armor":     armor = w; break;
+                case "inventory": inventory = w; break;
+                case "paperdoll": paperdoll = w; break;
+                case "hudconfig": hudConfig = w; break;
+                case "hitbox3d":  hitbox3d = w; break;
+                case "pulse":
+                case "popup":     overlays.push(w); break;
+            }
         }
+        renderHitboxes3d(hitbox3d);
         for (const [id, node] of hudText) {
             if (!seenText.has(id)) { node.remove(); hudText.delete(id); }
         }
+        for (const [id, node] of hudPanel) {
+            if (!seenPanel.has(id)) { node.remove(); hudPanel.delete(id); }
+        }
         renderArmor(armor);
         renderInventory(inventory);
+        renderPaperdoll(paperdoll);
+        renderOverlays(overlays);
+        applyHudConfig(hudConfig);
+    }
+
+    // Global HUD layer offset (Movable HUD). Reset to 0,0 when the module is off.
+    function applyHudConfig(w) {
+        const layer = document.getElementById("hud");
+        if (!layer) return;
+        if (!w) { layer.style.transform = ""; return; }
+        layer.style.transform = `translate(${w.offsetX || 0}px, ${w.offsetY || 0}px)`;
+    }
+
+    // ── Free-positioned text panels (Movable Coordinates / Day Counter) ──
+    const hudPanel = new Map();   // id -> element
+    function renderPanelWidget(w) {
+        let node = hudPanel.get(w.id);
+        if (!node) {
+            node = document.createElement("div");
+            node.className = "hud-widget hud-text hud-panel";
+            node.innerHTML = `<span class="ht-label"></span><span class="ht-value"></span><span class="ht-sub"></span>`;
+            el.free.appendChild(node);
+            hudPanel.set(w.id, node);
+        }
+        node.style.left = (w.x || 0) + "px";
+        node.style.top = (w.y || 0) + "px";
+        node.style.transform = `scale(${w.scale || 1})`;
+        node.querySelector(".ht-label").textContent = w.label || "";
+        node.querySelector(".ht-value").textContent = w.value || "";
+        const sub = node.querySelector(".ht-sub");
+        sub.textContent = w.sub || "";
+        sub.style.display = w.sub ? "" : "none";
+    }
+
+    // ── Paper doll (Movable Paperdoll) ──
+    function renderPaperdoll(w) {
+        if (!w) { removeFreeNode("paperdoll"); return; }
+        const node = ensureFreeNode("paperdoll", "hud-paperdoll");
+        node.style.left = (w.x || 0) + "px";
+        node.style.top = (w.y || 0) + "px";
+        node.style.transform = `scale(${w.scale || 1})`;
+        node.classList.toggle("inactive", !w.valid);
+        if (!node.dataset.built) {
+            node.innerHTML =
+                `<div class="pd-head"></div><div class="pd-torso">` +
+                `<div class="pd-arm l"></div><div class="pd-arm r"></div></div>` +
+                `<div class="pd-legs"><div class="pd-leg"></div><div class="pd-leg"></div></div>`;
+            node.dataset.built = "1";
+        }
+    }
+
+    // ── Crosshair-centred transient effects (Block Hit / Hit Ping / Hitboxes) ──
+    function renderOverlays(overlays) {
+        const seen = new Set();
+        for (const w of overlays) {
+            seen.add(w.id);
+            const node = ensureCrosshairNode(w.id);
+            const p = Math.max(0, Math.min(1, w.progress != null ? w.progress : 0));
+            if (w.type === "pulse") {
+                const size = (w.size || 1) * (18 + p * 26);
+                node.className = "xhair-fx xhair-pulse";
+                node.style.width = node.style.height = size + "px";
+                node.style.opacity = String(1 - p);
+            } else if (w.type === "popup") {
+                node.className = "xhair-fx xhair-popup";
+                node.textContent = w.value || "";
+                node.style.opacity = String(1 - p);
+                node.style.transform = `translate(-50%, calc(-50% - ${24 + p * 16}px))`;
+            }
+        }
+        for (const [id, node] of crosshairFx) {
+            if (!seen.has(id)) { node.remove(); crosshairFx.delete(id); }
+        }
+    }
+
+    // ── 3D entity hitboxes (canvas wireframe) ──
+    // Corners arrive already projected to render-target pixels from C++; we just
+    // join them with the cuboid edge table. Edges touching an off-screen/behind
+    // corner (valid=0) are skipped.
+    const BOX_EDGES = [
+        [0,1],[1,2],[2,3],[3,0],   // bottom face
+        [4,5],[5,6],[6,7],[7,4],   // top face
+        [0,4],[1,5],[2,6],[3,7],   // verticals
+    ];
+    let hbCanvas = null, hbCtx = null;
+    function ensureCanvas() {
+        if (hbCanvas) return;
+        hbCanvas = document.createElement("canvas");
+        hbCanvas.id = "hud-canvas";
+        hbCanvas.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:2;";
+        document.getElementById("hud").appendChild(hbCanvas);
+        hbCtx = hbCanvas.getContext("2d");
+    }
+    function renderHitboxes3d(w) {
+        if (!w || !w.boxes || !w.boxes.length) {
+            if (hbCtx) hbCtx.clearRect(0, 0, hbCanvas.width, hbCanvas.height);
+            return;
+        }
+        ensureCanvas();
+        const W = window.innerWidth, H = window.innerHeight;
+        if (hbCanvas.width !== W || hbCanvas.height !== H) { hbCanvas.width = W; hbCanvas.height = H; }
+        hbCtx.clearRect(0, 0, W, H);
+        hbCtx.lineWidth = w.width || 2;
+        hbCtx.lineJoin = "round";
+
+        for (const box of w.boxes) {
+            const c = box.c;
+            hbCtx.strokeStyle = box.sel
+                ? getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#7289da"
+                : "rgba(255,255,255,0.9)";
+            hbCtx.beginPath();
+            for (const [a, b] of BOX_EDGES) {
+                if (!c[a] || !c[b] || !c[a][2] || !c[b][2]) continue;
+                hbCtx.moveTo(c[a][0], c[a][1]);
+                hbCtx.lineTo(c[b][0], c[b][1]);
+            }
+            hbCtx.stroke();
+        }
+    }
+
+    const crosshairFx = new Map();
+    function ensureCrosshairNode(id) {
+        let node = crosshairFx.get(id);
+        if (!node) {
+            node = document.createElement("div");
+            node.dataset.fx = id;
+            el.free.appendChild(node);
+            crosshairFx.set(id, node);
+        }
+        return node;
     }
 
     function renderTextWidget(w) {
@@ -493,6 +640,70 @@
                       { id: "smooth",  label: "Smoothing", type: "float", value: 0.90, min: 0, max: 0.99, step: 0.01 },
                       { id: "showAvg", label: "Show 1% low", type: "bool", value: true },
                   ] },
+
+                // ── Newly ported Flarial features ──
+                { name: "Block Hit", description: "Visual block-hit animation overlay", category: "Visual", enabled: false, keybind: 0,
+                  settings: [
+                      { id: "duration", label: "Duration (s)", type: "float", value: 0.25, min: 0.10, max: 1.00, step: 0.05 },
+                      { id: "size", label: "Size", type: "float", value: 1.0, min: 0.5, max: 3, step: 0.1 },
+                  ] },
+                { name: "Hitboxes", description: "Render entity hitbox outlines (visual only)", category: "Visual", enabled: false, keybind: 0,
+                  settings: [
+                      { id: "range", label: "Range (blocks)", type: "int", value: 30, min: 5, max: 64 },
+                      { id: "width", label: "Line width", type: "float", value: 2.0, min: 0.5, max: 5, step: 0.5 },
+                  ] },
+                { name: "Java View Bobbing", description: "Java-style view bobbing", category: "Visual", enabled: false, keybind: 0,
+                  settings: [
+                      { id: "intensity", label: "Sway intensity", type: "float", value: 1.0, min: 0.1, max: 3, step: 0.1 },
+                      { id: "jumpFactor", label: "Jump dip factor", type: "float", value: 1.0, min: 0, max: 4, step: 0.1 },
+                  ] },
+                { name: "Minimal View Bobbing", description: "Reduced view-bobbing intensity", category: "Visual", enabled: false, keybind: 0, settings: [] },
+                { name: "Material Bin Loader", description: "Load custom shader / material-bin packs", category: "Visual", enabled: false, keybind: 0, settings: [] },
+                { name: "Null Movement", description: "Opposing movement keys: last input wins", category: "Movement", enabled: false, keybind: 0,
+                  settings: [
+                      { id: "horizontal", label: "Horizontal (A/D)", type: "bool", value: true },
+                      { id: "vertical", label: "Vertical (W/S)", type: "bool", value: false },
+                  ] },
+                { name: "Snap Look", description: "Snap camera to cardinal directions", category: "Movement", enabled: false, keybind: 0,
+                  settings: [
+                      { id: "angle", label: "Snap angle (°)", type: "float", value: 45, min: 15, max: 90, step: 15 },
+                      { id: "smooth", label: "Smooth turn", type: "bool", value: true },
+                  ] },
+                { name: "Force Coords", description: "Force coordinate display when server disables it", category: "World", enabled: false, keybind: 0,
+                  settings: [ { id: "overlay", label: "Also show overlay XYZ", type: "bool", value: true } ] },
+                { name: "Hit Ping", description: "Show your network ping when you land a hit", category: "Combat", enabled: false, keybind: 0,
+                  settings: [ { id: "duration", label: "Hold time (s)", type: "float", value: 1.5, min: 0.5, max: 5, step: 0.25 } ] },
+                { name: "Reach Display", description: "Show your attack reach distance (info only)", category: "Combat", enabled: false, keybind: 0,
+                  settings: [ { id: "hold", label: "Hold time (s)", type: "int", value: 5, min: 1, max: 30 } ] },
+                { name: "Opponent Reach", description: "Show the distance at which an opponent hit you", category: "Combat", enabled: false, keybind: 0,
+                  settings: [ { id: "hold", label: "Hold time (s)", type: "int", value: 5, min: 1, max: 30 } ] },
+                { name: "Memory Display", description: "Show RAM usage on screen", category: "Misc", enabled: false, keybind: 0,
+                  settings: [ { id: "system", label: "Show system usage", type: "bool", value: true } ] },
+                { name: "Movable Coordinates", description: "Freely repositionable XYZ display", category: "Misc", enabled: false, keybind: 0,
+                  settings: [
+                      { id: "x", label: "X position", type: "int", value: 8, min: 0, max: 1920 },
+                      { id: "y", label: "Y position", type: "int", value: 60, min: 0, max: 1080 },
+                      { id: "scale", label: "Scale", type: "float", value: 1.0, min: 0.5, max: 3, step: 0.1 },
+                      { id: "dimensionScale", label: "Show Nether (÷8)", type: "bool", value: false },
+                  ] },
+                { name: "Movable Day Counter", description: "Freely repositionable in-game day counter", category: "Misc", enabled: false, keybind: 0,
+                  settings: [
+                      { id: "x", label: "X position", type: "int", value: 8, min: 0, max: 1920 },
+                      { id: "y", label: "Y position", type: "int", value: 92, min: 0, max: 1080 },
+                      { id: "scale", label: "Scale", type: "float", value: 1.0, min: 0.5, max: 3, step: 0.1 },
+                  ] },
+                { name: "Movable Paperdoll", description: "Freely repositionable paper-doll panel", category: "Visual", enabled: false, keybind: 0,
+                  settings: [
+                      { id: "x", label: "X position", type: "int", value: 24, min: 0, max: 1920 },
+                      { id: "y", label: "Y position", type: "int", value: 320, min: 0, max: 1080 },
+                      { id: "scale", label: "Scale", type: "float", value: 1.0, min: 0.5, max: 3, step: 0.1 },
+                      { id: "sneaking", label: "Show pose changes", type: "bool", value: true },
+                  ] },
+                { name: "Movable HUD", description: "Reposition the whole Glacier HUD layer", category: "Misc", enabled: false, keybind: 0,
+                  settings: [
+                      { id: "offsetX", label: "X offset", type: "int", value: 0, min: -400, max: 400 },
+                      { id: "offsetY", label: "Y offset", type: "int", value: 0, min: -400, max: 400 },
+                  ] },
             ],
         };
         window.glacier.toggleModule = (name) => {
@@ -567,16 +778,91 @@
                 huds.push({ type: "text", id: "watermark", anchor: "top-left",
                     label: "", value: "Glacier", sub: "v1.0 · MCBE 1.26" });
             }
+            const px = 128 + Math.round(Math.sin(tick / 20) * 12);
+            const pz = -640 - Math.round(Math.cos(tick / 20) * 12);
             if (isOn("Coordinates")) {
-                const x = 128 + Math.round(Math.sin(tick / 20) * 12);
-                const z = -640 - Math.round(Math.cos(tick / 20) * 12);
                 const w = { type: "text", id: "coords", anchor: "bottom-left",
-                    label: "XYZ", value: `${x}, 72, ${z}` };
+                    label: "XYZ", value: `${px}, 72, ${pz}` };
                 if (sv("Coordinates", "dimensionScale", false)) {
-                    w.sub = `Nether ${Math.round(x / 8)}, ${Math.round(z / 8)}`;
+                    w.sub = `Nether ${Math.round(px / 8)}, ${Math.round(pz / 8)}`;
                 }
                 huds.push(w);
             }
+
+            // ── New widgets (preview simulation) ──
+            // A simulated "attack" every ~2.4 s drives the hit-reactive modules.
+            const sinceHit = tick % 24;
+            const hitFired = sinceHit < 16;     // fade window
+            const hitProg = sinceHit / 16;
+            const reachVal = (2.8 + Math.sin(tick / 11) * 0.3).toFixed(2);
+
+            if (isOn("Memory Display")) {
+                const w = { type: "text", id: "memory", anchor: "top-right",
+                    label: "RAM", value: `${1840 + (tick % 60)} MB` };
+                if (sv("Memory Display", "system", true)) w.sub = `system ${52 + (tick % 7)}%`;
+                huds.push(w);
+            }
+            if (isOn("Reach Display")) {
+                huds.push({ type: "text", id: "reach", anchor: "top-right",
+                    label: "Reach", value: hitFired ? `${reachVal} m` : "—" });
+            }
+            if (isOn("Opponent Reach")) {
+                huds.push({ type: "text", id: "oppreach", anchor: "top-right",
+                    label: "Opp. Reach", value: hitFired ? "3.04 m" : "—" });
+            }
+            if (isOn("Force Coords") && sv("Force Coords", "overlay", true)) {
+                huds.push({ type: "text", id: "forcecoords", anchor: "bottom-left",
+                    label: "XYZ", value: `${px}, 72, ${pz}`, sub: "forced (patched)" });
+            }
+            if (isOn("Movable Coordinates")) {
+                const w = { type: "panel", id: "movecoords",
+                    x: sv("Movable Coordinates", "x", 8), y: sv("Movable Coordinates", "y", 60),
+                    scale: sv("Movable Coordinates", "scale", 1),
+                    label: "XYZ", value: `${px}, 72, ${pz}` };
+                if (sv("Movable Coordinates", "dimensionScale", false)) {
+                    w.sub = `Nether ${Math.round(px / 8)}, ${Math.round(pz / 8)}`;
+                }
+                huds.push(w);
+            }
+            if (isOn("Movable Day Counter")) {
+                huds.push({ type: "panel", id: "moveday",
+                    x: sv("Movable Day Counter", "x", 8), y: sv("Movable Day Counter", "y", 92),
+                    scale: sv("Movable Day Counter", "scale", 1),
+                    label: "Day", value: String(42 + Math.floor(tick / 200)) });
+            }
+            if (isOn("Movable Paperdoll")) {
+                huds.push({ type: "paperdoll", id: "paperdoll",
+                    x: sv("Movable Paperdoll", "x", 24), y: sv("Movable Paperdoll", "y", 320),
+                    scale: sv("Movable Paperdoll", "scale", 1), valid: true });
+            }
+            if (isOn("Movable HUD")) {
+                huds.push({ type: "hudconfig", id: "hudoffset",
+                    offsetX: sv("Movable HUD", "offsetX", 0), offsetY: sv("Movable HUD", "offsetY", 0) });
+            }
+            if (isOn("Block Hit") && sinceHit < 5) {
+                huds.push({ type: "pulse", id: "blockhit",
+                    progress: sinceHit / 5, size: sv("Block Hit", "size", 1) });
+            }
+            if (isOn("Hit Ping") && hitFired) {
+                huds.push({ type: "popup", id: "hitping",
+                    value: `${28 + (tick % 12)} ms`, progress: hitProg });
+            }
+            if (isOn("Hitboxes")) {
+                // Simulate a projected humanoid box that drifts across the view,
+                // so the canvas wireframe path is exercised in the design preview.
+                const cx = window.innerWidth / 2 + Math.sin(tick / 30) * 160;
+                const cy = window.innerHeight / 2 + Math.cos(tick / 40) * 60;
+                const bw = 46, bh = 150, depth = 26;
+                const mk = (dx, dy) => [Math.round(cx + dx), Math.round(cy + dy), 1];
+                const corners = [
+                    mk(-bw/2, bh/2), mk(bw/2, bh/2), mk(bw/2 + depth, bh/2 - depth/2), mk(-bw/2 + depth, bh/2 - depth/2),
+                    mk(-bw/2, -bh/2), mk(bw/2, -bh/2), mk(bw/2 + depth, -bh/2 - depth/2), mk(-bw/2 + depth, -bh/2 - depth/2),
+                ];
+                huds.push({ type: "hitbox3d", id: "hitbox3d",
+                    width: sv("Hitboxes", "width", 2),
+                    boxes: [{ c: corners, sel: hitFired }] });
+            }
+
             window.glacier.onHud(huds);
         }, 100);
 

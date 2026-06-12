@@ -110,6 +110,22 @@
     <ClInclude Include="src\module\modules\InventoryHud.h" />
     <ClInclude Include="src\module\modules\Watermark.h" />
     <ClInclude Include="src\module\modules\Coordinates.h" />
+    <ClInclude Include="src\module\modules\BlockHit.h" />
+    <ClInclude Include="src\module\modules\ForceCoords.h" />
+    <ClInclude Include="src\module\modules\HitPing.h" />
+    <ClInclude Include="src\module\modules\Hitboxes.h" />
+    <ClInclude Include="src\module\modules\JavaViewBobbing.h" />
+    <ClInclude Include="src\module\modules\MaterialBinLoader.h" />
+    <ClInclude Include="src\module\modules\MemoryDisplay.h" />
+    <ClInclude Include="src\module\modules\MinimalViewBobbing.h" />
+    <ClInclude Include="src\module\modules\MovableCoordinates.h" />
+    <ClInclude Include="src\module\modules\MovableDayCounter.h" />
+    <ClInclude Include="src\module\modules\MovableHud.h" />
+    <ClInclude Include="src\module\modules\MovablePaperdoll.h" />
+    <ClInclude Include="src\module\modules\NullMovement.h" />
+    <ClInclude Include="src\module\modules\OpponentReach.h" />
+    <ClInclude Include="src\module\modules\ReachDisplay.h" />
+    <ClInclude Include="src\module\modules\SnapLook.h" />
     <ClInclude Include="src\ui\UIRenderer.h" />
     <ClInclude Include="src\ui\JsBridge.h" />
   </ItemGroup>

@@ -45,22 +45,43 @@ pre-install it from a terminal:
 & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install --triplet x64-windows-static-md
 ```
 
-### Ultralight SDK (manual)
+### Ultralight SDK (assembled from component archives)
 
-1. Download **ultralight-sdk-1.4.0-win-x64.7z** from ultralig.ht.
-2. Extract it so the layout is:
+Ultralight's website no longer offers an unauthenticated packaged-SDK download.
+Instead, fetch the four **pinned component archives** that Ultralight's own CMake
+build uses — they're public, and together they form the complete SDK. Run this
+from the repo root (needs 7-Zip on PATH; `winget install 7zip.7zip`):
+
+```powershell
+$domain = ".sfo2.cdn.digitaloceanspaces.com"
+$components = [ordered]@{
+  "ultralightcore-bin" = "41a04e01"   # base types, platform/*.h, Config.h
+  "webcore-bin"        = "e9fa2251"   # WebCore.dll + bin/resources (icudt, cacert)
+  "ultralight-bin"     = "561bd7be"   # Ultralight.dll, Renderer/View headers
+  "appcore-bin"        = "5f88113"    # AppCore.dll + AppCore headers
+}
+$sdk = "third_party/ultralight"
+New-Item -ItemType Directory -Force $sdk | Out-Null
+foreach ($name in $components.Keys) {
+  $rev = $components[$name]
+  Invoke-WebRequest "https://$name$domain/$name-$rev-win-x64.7z" -OutFile "$name.7z"
+  & 7z x "$name.7z" -o"$sdk" -y    # the four archives merge into include/ lib/ bin/
+  Remove-Item "$name.7z"
+}
+```
+
+Resulting layout (what the `.vcxproj` expects at `third_party/ultralight`):
 
 ```
-Glacier/
-└── third_party/
-    └── ultralight/
-        ├── include/        (Ultralight/, AppCore/, JavaScriptCore/ …)
-        ├── lib/            (Ultralight.lib, UltralightCore.lib, WebCore.lib, AppCore.lib)
-        ├── bin/            (the matching .dll runtime files)
-        └── resources/      (icudt67l.dat, cacert.pem)
+third_party/ultralight/
+├── include/   (Ultralight/, Ultralight/platform/, AppCore/)
+├── lib/       (UltralightCore.lib, WebCore.lib, Ultralight.lib, AppCore.lib)
+└── bin/       (the four .dll runtime files + resources/{icudt67l.dat,cacert.pem})
 ```
 
-The `.vcxproj` already points its include/lib dirs at `third_party/ultralight`.
+> These revisions match the v1.3.0 / v1.4.0-beta **C++** API the code targets.
+> Don't grab Ultralight 1.4's CAPI-only packaging — the `Ultralight/platform/*`
+> headers this project includes won't be there.
 
 ---
 
@@ -118,7 +139,7 @@ $out = "GlacierClient"
 New-Item -ItemType Directory -Force $out, "$out\assets" | Out-Null
 Copy-Item build\x64\Release\Glacier.dll $out
 Copy-Item third_party\ultralight\bin\*.dll $out
-Copy-Item -Recurse third_party\ultralight\resources $out\resources
+Copy-Item -Recurse third_party\ultralight\bin\resources $out\resources
 Copy-Item -Recurse web\* $out\assets
 ```
 

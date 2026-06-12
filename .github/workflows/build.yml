@@ -14,7 +14,13 @@ permissions:
 env:
   BUILD_CONFIGURATION: Release
   BUILD_PLATFORM: x64
-  ULTRALIGHT_VERSION: "1.4.0"
+  # Ultralight no longer offers an unauthenticated packaged-SDK download, so we
+  # fetch the four pinned component archives its own CMake build uses. These
+  # revisions match the v1.3.0 / v1.4.0-beta C++ API our code targets.
+  UL_CORE_REV: "41a04e01"
+  UL_WEBCORE_REV: "e9fa2251"
+  UL_ULTRALIGHT_REV: "561bd7be"
+  UL_APPCORE_REV: "5f88113"
 
 jobs:
   build:
@@ -43,23 +49,37 @@ jobs:
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install --triplet x64-windows-static-md
         shell: pwsh
 
-      # ── Dependencies: Ultralight SDK (not in vcpkg) ───────────────────────
+      # ── Dependencies: Ultralight SDK (assembled from component archives) ──
       - name: Cache Ultralight SDK
         id: cache-ul
         uses: actions/cache@v4
         with:
           path: third_party/ultralight
-          key: ultralight-${{ env.ULTRALIGHT_VERSION }}-win-x64
+          key: ultralight-${{ env.UL_CORE_REV }}-${{ env.UL_WEBCORE_REV }}-${{ env.UL_ULTRALIGHT_REV }}-${{ env.UL_APPCORE_REV }}-win-x64
 
-      - name: Download Ultralight SDK
+      - name: Download & assemble Ultralight SDK
         if: steps.cache-ul.outputs.cache-hit != 'true'
+        shell: pwsh
         run: |
-          $ver = "${{ env.ULTRALIGHT_VERSION }}"
-          $url = "https://ultralight-sdk-dev.sfo2.cdn.digitaloceanspaces.com/ultralight-sdk-$ver-win-x64.7z"
-          Write-Host "Downloading Ultralight $ver"
-          Invoke-WebRequest -Uri $url -OutFile ultralight.7z
-          New-Item -ItemType Directory -Force -Path third_party/ultralight | Out-Null
-          7z x ultralight.7z -othird_party/ultralight -y
+          $domain = ".sfo2.cdn.digitaloceanspaces.com"
+          $components = [ordered]@{
+            "ultralightcore-bin" = "${{ env.UL_CORE_REV }}"   # base types + platform/ headers + Config.h
+            "webcore-bin"        = "${{ env.UL_WEBCORE_REV }}" # WebCore.dll + bin/resources (icudt, cacert)
+            "ultralight-bin"     = "${{ env.UL_ULTRALIGHT_REV }}"
+            "appcore-bin"        = "${{ env.UL_APPCORE_REV }}"
+          }
+          $sdk = "third_party/ultralight"
+          New-Item -ItemType Directory -Force -Path $sdk | Out-Null
+          foreach ($name in $components.Keys) {
+            $rev = $components[$name]
+            $url = "https://$name$domain/$name-$rev-win-x64.7z"
+            Write-Host "Downloading $url"
+            Invoke-WebRequest -Uri $url -OutFile "$name.7z"
+            # All four archives share the include/ lib/ bin/ layout and merge cleanly.
+            7z x "$name.7z" -o"$sdk" -y | Out-Null
+          }
+          Write-Host "Assembled SDK libs:"
+          Get-ChildItem "$sdk/lib" | Select-Object -ExpandProperty Name
         shell: pwsh
 
       # ── Build ──────────────────────────────────────────────────────────────
@@ -72,18 +92,19 @@ jobs:
             /p:VcpkgEnableManifest=true
         shell: pwsh
 
-      # ── Package: dll + web UI + Ultralight runtime dlls ───────────────────
+      # ── Package: dll + Ultralight runtime (dlls + resources) + web UI ─────
       - name: Stage release package
+        shell: pwsh
         run: |
           $out = "dist"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          New-Item -ItemType Directory -Force -Path $out, "$out/assets" | Out-Null
           Copy-Item "build/x64/Release/Glacier.dll" $out
-          Copy-Item -Recurse "web" "$out/assets-src"
-          # Ship the Ultralight runtime dlls and the HTML/CSS/JS the DLL loads.
-          Copy-Item "third_party/ultralight/bin/*.dll" $out -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path "$out/assets" | Out-Null
+          # Ultralight runtime DLLs + its resources/ folder (icudt67l.dat, cacert.pem).
+          Copy-Item "third_party/ultralight/bin/*.dll" $out
+          Copy-Item -Recurse "third_party/ultralight/bin/resources" "$out/resources"
+          # The HTML/CSS/JS the DLL loads, including the bundled FontAwesome kit.
           Copy-Item "web/*" "$out/assets" -Recurse
-        shell: pwsh
+          Write-Host "Package contents:"; Get-ChildItem $out | Select-Object -ExpandProperty Name
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
