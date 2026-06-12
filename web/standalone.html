@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Glacier — Standalone Test</title>
+
+    <link rel="stylesheet" href="assets/fontawesome/css/all.min.css" />
+    <link rel="stylesheet" href="style.css" />
+    <style>
+        /* The simulated game lives behind everything. */
+        #game {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            display: block;
+        }
+        body { background: #4a7cc4; }   /* sky fallback before canvas paints */
+
+        /* "Press Insert" hint, shown while the menu is closed. */
+        #open-hint {
+            position: fixed;
+            bottom: 18px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 2;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            background: rgba(20, 22, 26, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: var(--text);
+            font: 500 12px 'Segoe UI', system-ui, sans-serif;
+            backdrop-filter: blur(8px);
+            transition: opacity 0.2s ease;
+            pointer-events: none;
+        }
+        #open-hint kbd {
+            font-family: inherit;
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 5px;
+            padding: 1px 7px;
+        }
+        #open-hint i { color: var(--accent); }
+    </style>
+</head>
+<body>
+    <!-- Simulated running game -->
+    <canvas id="game"></canvas>
+
+    <div id="open-hint">
+        <i class="fa-solid fa-snowflake"></i>
+        Press <kbd>Insert</kbd> to open the Glacier menu
+    </div>
+
+    <!-- ───────── Always-on HUD ───────── -->
+    <div class="hud-layer" id="hud">
+        <div class="hud-corner tl" id="hud-tl"></div>
+        <div class="hud-corner tr" id="hud-tr"></div>
+        <div class="hud-corner bl" id="hud-bl"></div>
+        <div class="hud-corner br" id="hud-br"></div>
+        <div class="hud-free" id="hud-free"></div>
+    </div>
+
+    <!-- ───────── Click GUI ───────── -->
+    <div class="glacier-menu" id="menu" hidden>
+        <div class="glacier-root" id="root">
+            <aside class="sidebar">
+                <div class="brand">
+                    <div class="brand-logo"><i class="fa-solid fa-snowflake"></i></div>
+                    <div class="brand-text">
+                        <span class="brand-title">Glacier</span>
+                        <span class="brand-sub">Bedrock Client</span>
+                    </div>
+                </div>
+                <nav class="nav" id="nav"></nav>
+                <div class="sidebar-footer">
+                    <button class="ghost-btn" id="closeBtn" data-tooltip="Close (ESC)">
+                        <i class="fa-solid fa-xmark"></i><span>Close</span>
+                    </button>
+                </div>
+            </aside>
+
+            <main class="content">
+                <header class="content-header">
+                    <div class="header-title">
+                        <h1 id="categoryTitle">Combat</h1>
+                        <div class="title-underline"></div>
+                    </div>
+                    <div class="search-box">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input type="text" id="search" placeholder="Search modules…" autocomplete="off" />
+                    </div>
+                </header>
+
+                <section class="module-grid" id="modules"></section>
+
+                <div class="empty-state" id="emptyState" hidden>
+                    <i class="fa-solid fa-wind"></i>
+                    <span>No modules match your search</span>
+                    <small>Try a different category or clear the filter.</small>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <div class="toast-host" id="toastHost"></div>
+
+    <!-- Enable standalone mode before the UI script runs. -->
+    <script>window.GLACIER_STANDALONE = true;</script>
+    <script src="main.js"></script>
+    <script src="standalone-game.js"></script>
+</body>
+</html>

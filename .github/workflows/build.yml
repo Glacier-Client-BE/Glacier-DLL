@@ -1,0 +1,108 @@
+name: Build Glacier DLL
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to publish release assets on tag builds
+
+env:
+  BUILD_CONFIGURATION: Release
+  BUILD_PLATFORM: x64
+  ULTRALIGHT_VERSION: "1.4.0"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Toolchain ──────────────────────────────────────────────────────────
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      # ── Dependencies: vcpkg (MinHook) ──────────────────────────────────────
+      # windows-latest ships a bootstrapped vcpkg at $VCPKG_INSTALLATION_ROOT.
+      # Manifest mode reads vcpkg.json and installs MinHook during the build.
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/vcpkg_installed
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Install vcpkg dependencies
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install --triplet x64-windows-static-md
+        shell: pwsh
+
+      # ── Dependencies: Ultralight SDK (not in vcpkg) ───────────────────────
+      - name: Cache Ultralight SDK
+        id: cache-ul
+        uses: actions/cache@v4
+        with:
+          path: third_party/ultralight
+          key: ultralight-${{ env.ULTRALIGHT_VERSION }}-win-x64
+
+      - name: Download Ultralight SDK
+        if: steps.cache-ul.outputs.cache-hit != 'true'
+        run: |
+          $ver = "${{ env.ULTRALIGHT_VERSION }}"
+          $url = "https://ultralight-sdk-dev.sfo2.cdn.digitaloceanspaces.com/ultralight-sdk-$ver-win-x64.7z"
+          Write-Host "Downloading Ultralight $ver"
+          Invoke-WebRequest -Uri $url -OutFile ultralight.7z
+          New-Item -ItemType Directory -Force -Path third_party/ultralight | Out-Null
+          7z x ultralight.7z -othird_party/ultralight -y
+        shell: pwsh
+
+      # ── Build ──────────────────────────────────────────────────────────────
+      - name: Build Glacier.dll
+        run: |
+          msbuild Glacier.sln `
+            /m `
+            /p:Configuration=$env:BUILD_CONFIGURATION `
+            /p:Platform=$env:BUILD_PLATFORM `
+            /p:VcpkgEnableManifest=true
+        shell: pwsh
+
+      # ── Package: dll + web UI + Ultralight runtime dlls ───────────────────
+      - name: Stage release package
+        run: |
+          $out = "dist"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item "build/x64/Release/Glacier.dll" $out
+          Copy-Item -Recurse "web" "$out/assets-src"
+          # Ship the Ultralight runtime dlls and the HTML/CSS/JS the DLL loads.
+          Copy-Item "third_party/ultralight/bin/*.dll" $out -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path "$out/assets" | Out-Null
+          Copy-Item "web/*" "$out/assets" -Recurse
+        shell: pwsh
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Glacier-${{ env.BUILD_PLATFORM }}-${{ env.BUILD_CONFIGURATION }}
+          path: dist/**
+          if-no-files-found: error
+
+      # ── Publish a GitHub Release on version tags ──────────────────────────
+      - name: Zip release asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: Compress-Archive -Path dist/* -DestinationPath "Glacier-${{ github.ref_name }}.zip"
+        shell: pwsh
+
+      - name: Publish Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Glacier-${{ github.ref_name }}.zip
+            dist/Glacier.dll
+          generate_release_notes: true

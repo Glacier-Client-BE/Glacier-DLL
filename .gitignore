@@ -1,0 +1,29 @@
+# Build output
+/build/
+/dist/
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.obj
+
+# Dependencies (restored by CI / locally)
+/vcpkg_installed/
+/third_party/ultralight/
+
+# Reference repos studied for architecture (not part of the project)
+/reference/
+
+# Visual Studio
+/.vs/
+*.user
+*.suo
+*.VC.db
+
+# Logs
+ultralight.log
+/cache/
+
+# Packaged standalone test build
+/Glacier-Standalone-Test.zip
