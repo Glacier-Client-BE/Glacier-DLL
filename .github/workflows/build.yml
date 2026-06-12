@@ -46,7 +46,11 @@ jobs:
 
       - name: Install vcpkg dependencies
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install --triplet x64-windows-static-md
+          # User-wide integration imports vcpkg's MSBuild props/targets so the
+          # project's VcpkgEnableManifest/VcpkgTriplet settings take effect
+          # (hosted runners don't have it enabled by default).
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" integrate install
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install --triplet x64-windows-static
         shell: pwsh
 
       # ── Dependencies: Ultralight SDK (assembled from component archives) ──

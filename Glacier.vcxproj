@@ -18,7 +18,8 @@
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
     <!-- vcpkg manifest mode: MinHook is restored from vcpkg.json automatically. -->
     <VcpkgEnableManifest>true</VcpkgEnableManifest>
-    <VcpkgTriplet>x64-windows-static-md</VcpkgTriplet>
+    <!-- Static-CRT triplet to match RuntimeLibrary=MultiThreaded(/MT) below. -->
+    <VcpkgTriplet>x64-windows-static</VcpkgTriplet>
   </PropertyGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />

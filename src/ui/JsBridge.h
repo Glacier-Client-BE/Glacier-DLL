@@ -2,6 +2,9 @@
 
 #include <Ultralight/Ultralight.h>
 #include <Ultralight/View.h>
+#include <AppCore/JSHelpers.h>
+
+#include <string>
 
 // The native <-> JavaScript bridge. On every page load it installs a global
 // `glacier` object whose methods are backed by C++ lambdas. The web UI calls

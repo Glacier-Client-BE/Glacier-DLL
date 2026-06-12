@@ -58,6 +58,9 @@ std::filesystem::path moduleDir() {
 
 } // namespace
 
+UIRenderer::UIRenderer() = default;
+UIRenderer::~UIRenderer() = default;
+
 bool UIRenderer::initialize(ID3D11Device* device, ID3D11DeviceContext*, IDXGISwapChain* swapChain) {
     if (m_initialized) return true;
 

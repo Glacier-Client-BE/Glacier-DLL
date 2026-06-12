@@ -42,7 +42,10 @@ public:
     ultralight::View* view() { return m_view.get(); }
 
 private:
-    UIRenderer() = default;
+    // Out of line: unique_ptr<JsBridge> needs the complete type to destroy,
+    // and JsBridge is only forward-declared in this header.
+    UIRenderer();
+    ~UIRenderer();
 
     void createPipeline(ID3D11Device* device);     // size-independent state
     void createSizedResources(ID3D11Device* device); // texture + srv (per size)

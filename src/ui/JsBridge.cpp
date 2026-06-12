@@ -68,7 +68,7 @@ void JsBridge::OnDOMReady(View* caller, uint64_t, bool is_main_frame, const Stri
     api["setKeybind"]   = BindJSCallbackWithRetval(&JsBridge::jsSetKeybind);
     api["closeMenu"]    = BindJSCallbackWithRetval(&JsBridge::jsCloseMenu);
 
-    global["glacier"] = api;
+    global["glacier"] = JSValue(api);
 
     LOG_INFO("glacier JS API installed");
     pushState();
