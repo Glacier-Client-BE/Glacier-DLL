@@ -1,0 +1,24 @@
+# Build output
+/build/
+/dist/
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.obj
+
+# Dependencies (restored by CI / locally)
+/vcpkg_installed/
+
+# Reference repos studied for architecture (never part of the project itself)
+/reference/
+
+# Visual Studio
+/.vs/
+*.user
+*.suo
+*.VC.db
+
+# Logs
+/cache/

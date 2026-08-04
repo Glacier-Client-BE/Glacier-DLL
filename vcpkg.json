@@ -1,0 +1,10 @@
+{
+  "name": "glacier-dll",
+  "version": "0.1.0",
+  "description": "Glacier — open-source internal client for Minecraft: Bedrock Edition",
+  "homepage": "https://github.com/Glacier-Client-BE/Glacier-DLL",
+  "dependencies": [
+    "minhook"
+  ],
+  "builtin-baseline": "120deac3062162151622ca4860575a33844ba10b"
+}

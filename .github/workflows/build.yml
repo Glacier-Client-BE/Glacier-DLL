@@ -1,0 +1,88 @@
+name: Build Glacier DLL
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to publish release assets on tag builds
+
+env:
+  BUILD_CONFIGURATION: Release
+  BUILD_PLATFORM: x64
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Toolchain ──────────────────────────────────────────────────────────
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      # ── Dependencies: vcpkg (MinHook) ──────────────────────────────────────
+      # windows-latest ships a bootstrapped vcpkg at $VCPKG_INSTALLATION_ROOT.
+      # Manifest mode reads vcpkg.json and installs MinHook during the build.
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/vcpkg_installed
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Install vcpkg dependencies
+        run: |
+          # User-wide integration imports vcpkg's MSBuild props/targets so the
+          # project's VcpkgEnableManifest/VcpkgTriplet settings take effect
+          # (hosted runners don't have it enabled by default).
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" integrate install
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install --triplet x64-windows-static
+        shell: pwsh
+
+      # ── Build ──────────────────────────────────────────────────────────────
+      - name: Build Glacier.dll
+        run: |
+          msbuild Glacier.sln `
+            /m `
+            /p:Configuration=$env:BUILD_CONFIGURATION `
+            /p:Platform=$env:BUILD_PLATFORM `
+            /p:VcpkgEnableManifest=true
+        shell: pwsh
+
+      # ── Package: dll only (native UI ships no extra runtime files) ─────────
+      - name: Stage release package
+        shell: pwsh
+        run: |
+          $out = "dist"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item "build/x64/Release/Glacier.dll" $out
+          Write-Host "Package contents:"; Get-ChildItem $out | Select-Object -ExpandProperty Name
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Glacier-${{ env.BUILD_PLATFORM }}-${{ env.BUILD_CONFIGURATION }}
+          path: dist/**
+          if-no-files-found: error
+
+      # ── Publish a GitHub Release on version tags ──────────────────────────
+      - name: Zip release asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: Compress-Archive -Path dist/* -DestinationPath "Glacier-${{ github.ref_name }}.zip"
+        shell: pwsh
+
+      - name: Publish Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Glacier-${{ github.ref_name }}.zip
+            dist/Glacier.dll
+          generate_release_notes: true
