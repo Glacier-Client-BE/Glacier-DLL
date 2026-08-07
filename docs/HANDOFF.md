@@ -359,6 +359,26 @@ being broken can be one shared input assumption. Before debugging a UI
 interaction bug here, confirm which window is hooked — the log line `game window
 corrected to 0x…` tells you it happened.
 
+## ResizeBuffers: release the back buffer unconditionally
+
+`IDXGISwapChain::ResizeBuffers` fails with `DXGI_ERROR_INVALID_CALL` if **any**
+outstanding reference to a back buffer exists. Glacier holds one
+(`m_backBufferRtv`, from compositing), so `Renderer::resize` must drop it before
+the game's call runs — with no early-out in front of it.
+
+The two cases that are easy to skip and must not be:
+
+- **`width`/`height` of `0`.** Not a degenerate call to ignore: it is DXGI's
+  "keep the current size", and it is the most common form.
+- **An unchanged size.** Still called for buffer-count and fullscreen changes.
+
+The failure is silent and remote. `ResizeBuffers` returns an error the game
+does not necessarily check, the game continues on a swap chain it believes it
+resized, and it dies later inside DXGI with a wild pointer — with Glacier's
+crash activity reading `(idle)`, because by then no Glacier code is on the
+stack. `D3DHook::hkResizeBuffers` now logs a failed `ResizeBuffers` explicitly
+so this can never be silent again.
+
 ## Never block the game's threads
 
 Two separate hangs came from Glacier blocking a game thread. Both looked like
