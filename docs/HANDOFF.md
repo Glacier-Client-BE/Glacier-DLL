@@ -213,6 +213,63 @@ config persistence, version targeting + sync tooling).
 Scope boundary (enforced since Phase 0): **visual / HUD / QoL only**. No
 KillAura, reach, fly, aimbot, or server-hitbox manipulation.
 
+## References
+
+All four reference clients are copyleft-compatible with our AGPLv3 (GPLv3
+material may be incorporated under GPLv3 §13; LGPL-3.0 likewise). Attribution
+belongs in `docs/acknowledgements.md`, and any imported *data* belongs only in
+`src/memory/Signatures.cpp`.
+
+### Reference clients
+
+| Project | License | Use it for |
+|---|---|---|
+| **[Latite](https://github.com/LatiteClient/Latite)** | GPLv3 | **Primary signature source.** Actively maintained, supports 1.26.4x. Our sync tool reads it directly. |
+| **[Flarial (dll-oss)](https://github.com/flarialmc/dll-oss)** | AGPLv3 | Rendering internals — swapchain hooking, item rendering, ECS components, DX12. |
+| **[Selaura](https://github.com/selauraclient/selaura)** | GPLv3 | Small, clean framework. Good for scanning technique; no module catalog. |
+| **[LeviLamina](https://github.com/liteldev/levilamina)** | LGPL-3.0 | Named class/struct/method headers. **BDS-only** — client types (`ClientInstance`, `Options`, `LevelRenderer`) don't exist there, and shared-type offsets can still differ. Names and shapes, never offsets. |
+
+### Specific files that mattered
+
+Direct links, because finding these again costs a session:
+
+**Latite**
+- [`src/mc/Addresses.h`](https://github.com/LatiteClient/Latite/blob/master/src/mc/Addresses.h) — every AOB pattern. What `tools/sync_signatures.py` parses. Contains `ClientInstance::grabCursor` / `releaseCursor` needed for bug 3.
+- [`src/mc/common/client/game/ClientInstance.cpp`](https://github.com/LatiteClient/Latite/blob/master/src/mc/common/client/game/ClientInstance.cpp) — the object-graph chain and `getLocalPlayer` vtable index (`0x1F`).
+- [`src/mc/common/client/game/Platform_GameCore.cpp`](https://github.com/LatiteClient/Latite/blob/master/src/mc/common/client/game/Platform_GameCore.cpp) — how the root global is walked.
+- [`src/client/feature/module/modules/visual/Fullbright.cpp`](https://github.com/LatiteClient/Latite/blob/master/src/client/feature/module/modules/visual/Fullbright.cpp) — the 0–25 gamma range that fixes bug 4.
+- `src/mc/common/world/actor/Actor.h`, `.../player/Player.h`, `.../PlayerInventory.h` — `CLASS_FIELD` offsets the sync tool extracts.
+
+**Flarial**
+- [`src/Client/Hook/Hooks/Render/DirectX/DX11/SwapchainHook_DX11.cpp`](https://github.com/flarialmc/dll-oss/blob/HEAD/src/Client/Hook/Hooks/Render/DirectX/DX11/SwapchainHook_DX11.cpp) — the `OMSetRenderTargets(1, &rtv, nullptr)` that fixed our blank overlay. Also shows D2D binding an RGBA back buffer directly.
+- `src/Client/Hook/Hooks/Render/ItemRendererRenderGroupHook.*` and `TextureGroup_getTextureHook.*` — **the starting point for Phase 7 (item rendering).**
+- `src/SDK/Client/Actor/Components/ActorEquipmentComponent.hpp` — armor container layout.
+- `src/SDK/Client/Actor/EntityContext.hpp` — entt traits for the Bedrock registry.
+
+**Selaura**
+- [`src/hooks/memory.hpp`](https://github.com/selauraclient/selaura/blob/HEAD/src/hooks/memory.hpp) — [libhat](https://github.com/BasedInc/libhat) SIMD pattern scanning. Worth adopting over our naive byte loop in `memory/Memory.cpp`.
+- `src/api/mc/client/*.hpp` — padded struct layouts, useful for cross-checking offsets against a *different* build.
+
+### Libraries
+
+- [MinHook](https://github.com/TsudaKageyu/minhook) — our hooking engine (via vcpkg).
+- [libhat](https://github.com/BasedInc/libhat) — candidate scanner upgrade.
+- [EnTT](https://github.com/skypjack/entt) — Bedrock's ECS. Needed for component lookups; the registry layout must match the game's build.
+- [kiero](https://github.com/Rebzzel/kiero) — the throwaway-device vtable discovery technique our `D3DHook` reimplements.
+
+### Bedrock docs
+
+- [bedrock.dev](https://bedrock.dev/) — protocol and JSON UI docs.
+- [wiki.bedrock.dev JSON UI](https://wiki.bedrock.dev/json-ui/json-ui-intro) — relevant only for the *pack*, not the DLL.
+
+### This project
+
+- Repo: <https://github.com/Glacier-Client-BE/Glacier-DLL>
+- CI: <https://github.com/Glacier-Client-BE/Glacier-DLL/actions>
+- Local pack (widget reference for Phase 8):
+  `C:\Users\User\Desktop\Glacier v7\packs\Glacier Client v7 [Main]\ui\glacier\screens\hud_screen\hud_modules\`
+  — `entity_modules/` and `jsonui_modules/` list ~30 widgets worth porting.
+
 ## Verification reality
 
 CI proves compilation. It cannot prove anything works in-game — that needs the
