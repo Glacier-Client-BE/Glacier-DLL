@@ -310,6 +310,31 @@ drifted from `src/memory/Signatures.cpp` (it still lists entries such as
 `ClientInstance::update`, `GameMode::attack`, and `Container::begin` that the
 current generated table does not contain) — worth a pass.
 
+## Pausing the game: release is not a one-shot
+
+`releaseCursor()` called once, when the menu opens, **does not hold** — the game
+re-grabs the cursor on its own, and the player keeps moving behind the menu.
+This is not a threading problem and no amount of choosing a better thread fixes
+it.
+
+Latite's `ScreenManager::onUpdate` is the shape that works, and
+`GameSDK::applyCursorState` mirrors it:
+
+```cpp
+if (menuOpen) { if (cursorGrabbed()) releaseCursor(); }   // every frame
+else if (menuWasOpen) { grabCursor(); }                   // once, on close
+```
+
+Two rules that matter:
+
+- **Release repeatedly, grab once.** The release has to be re-asserted every
+  frame; the grab is edge-triggered on menu close.
+- **Never grab just because the cursor is released.** The game releases it for
+  its own screens — pause, inventory, chat. A reconciler that "fixes" that
+  would fight the game for control of its own UI.
+
+The gate is `MinecraftGame::isCursorGrabbed()`, a bool at `+0x1D8`.
+
 ## The wrong-window bug (fixed — read this before debugging input)
 
 For a while, **Glacier was hooking its own debug console instead of the game.**
