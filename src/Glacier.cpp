@@ -16,6 +16,8 @@
 #include "util/FrameStats.h"
 #include "util/Logger.h"
 
+#include <filesystem>
+#include <system_error>
 #include <windowsx.h>
 
 namespace glacier {
@@ -24,10 +26,22 @@ void Glacier::start(HMODULE self) {
     m_self = self;
 
     Logger::get().attachConsole();
-    LOG_INFO("Glacier attaching (build " __DATE__ " " __TIME__ ")");
 
-    // Before anything touches the game: a crash from here on gets an address
-    // and a description instead of just ending the log.
+    // The file log is opened before anything else happens, because everything
+    // after this point can take the game down with it — and a console that dies
+    // with the process is worthless for exactly that case.
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(Config::directory(), ec);
+        Logger::get().openFile(Config::directory() + "\\glacier.log");
+    }
+
+    LOG_INFO("Glacier attaching (build " __DATE__ " " __TIME__ ")");
+    LOG_INFO("logging to {} (previous session kept as glacier.log.prev)",
+             Logger::get().filePath());
+
+    // A crash from here on gets an address and a description instead of just
+    // ending the log.
     CrashHandler::install();
 
     // 1. Resolve the game SDK from signatures. Refuse to continue if the core
@@ -256,6 +270,7 @@ void Glacier::start(HMODULE self) {
     CrashHandler::remove();
 
     LOG_INFO("Glacier detached");
+    Logger::get().closeFile();
     Logger::get().detachConsole();
 
     FreeLibraryAndExitThread(m_self, 0);

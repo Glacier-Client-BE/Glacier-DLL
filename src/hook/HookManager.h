@@ -36,6 +36,15 @@ public:
     bool create(const std::string& name, void* target, Fn detour, Fn* original) {
         if (!m_initialized) return false;
 
+        // Logged before the patch, not just after it. Installing a hook writes
+        // over the target and suspends threads to do it, so a bad address can
+        // hang or corrupt the game *inside* this call — and a success-only log
+        // line leaves that looking like the previous step was the last thing
+        // that ran. This line is the difference between "died somewhere after
+        // config load" and "died installing this specific hook".
+        LOG_TRACE("installing hook '{}' @ {:#x}", name,
+                  reinterpret_cast<std::uintptr_t>(target));
+
         if (MH_CreateHook(target, reinterpret_cast<void*>(detour),
                           reinterpret_cast<void**>(original)) != MH_OK) {
             LOG_ERROR("MH_CreateHook failed for '{}'", name);
