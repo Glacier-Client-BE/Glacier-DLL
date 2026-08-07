@@ -76,6 +76,12 @@ class SigEntry:
     # then executes something else entirely.
     deref: int | None = None
 
+    # True when the deref lands on a global variable rather than a function.
+    # The generated table validates the resolved address against this, and the
+    # two cases are opposites: a function must be executable, a global must not
+    # be. Only meaningful together with `deref`.
+    data: bool = False
+
 
 @dataclass(frozen=True)
 class OffsetEntry:
@@ -92,8 +98,10 @@ SIGNATURES: list[SigEntry] = [
         "Platform_GameCore", "Platform_GameCore",
         "The root of the object graph. A `mov [rip+disp], r15` store into a\n"
         "// global; the RIP-relative operand at +3 addresses the global itself,\n"
-        "// so this resolves to the global rather than to the instruction.",
+        "// so this resolves to the global rather than to the instruction.\n"
+        "// Data, not code — it is read, never called.",
         deref=3,
+        data=True,
     ),
     SigEntry(
         "Options::getGamma", "Options::getGamma",
@@ -418,6 +426,9 @@ def generate(sigs: dict[str, Upstream], fields: dict[str, dict[str, int]], sha: 
         out.append(f'    addSignature("{entry.glacier}",')
         if entry.deref is None:
             out.append(f'        "{pattern}");')
+        elif entry.data:
+            out.append(f'        "{pattern}",')
+            out.append(f'        /*deref*/ {entry.deref}, TargetKind::Data);')
         else:
             out.append(f'        "{pattern}",')
             out.append(f'        /*deref*/ {entry.deref});')

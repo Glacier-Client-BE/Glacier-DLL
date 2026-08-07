@@ -48,9 +48,10 @@ void SignatureManager::seedBedrock() {
     // The root of the object graph. A `mov [rip+disp], r15` store into a
     // global; the RIP-relative operand at +3 addresses the global itself,
     // so this resolves to the global rather than to the instruction.
+    // Data, not code — it is read, never called.
     addSignature("Platform_GameCore",
         "4C 89 3D ? ? ? ? 4D 85 FF",
-        /*deref*/ 3);
+        /*deref*/ 3, TargetKind::Data);
 
     // Hooked by Fullbright to return an override brightness. The trailing
     // immediate is the option index and it moves between builds, which is

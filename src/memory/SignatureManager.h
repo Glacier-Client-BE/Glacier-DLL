@@ -46,8 +46,22 @@ public:
     // it is stated per entry in the generated table rather than inferred.
     static constexpr int kMatchIsTarget = -1;
 
+    // What a deref'd signature points AT. This is not cosmetic: a resolved
+    // address is validated against it, and the two kinds live in different
+    // sections with different page protection.
+    //
+    //   Code  a function — to hook or to call. Must be executable.
+    //   Data  a global variable — to read. Must NOT be executable, because a
+    //         global that resolves into .text means the displacement was
+    //         decoded from the wrong instruction.
+    //
+    // Only meaningful with a deref offset; a pattern that matched directly is
+    // by construction sitting on the bytes it matched.
+    enum class TargetKind { Code, Data };
+
     void addSignature(std::string name, std::string idaPattern,
-                      int derefOffset = kMatchIsTarget);
+                      int derefOffset = kMatchIsTarget,
+                      TargetKind kind = TargetKind::Code);
     void addOffset(std::string name, std::ptrdiff_t offset);
 
     // ── Version gating ──
@@ -103,6 +117,7 @@ private:
     struct Entry {
         std::string    pattern;
         int            derefOffset = kMatchIsTarget;
+        TargetKind     kind = TargetKind::Code;
         std::uintptr_t address = 0;
     };
 

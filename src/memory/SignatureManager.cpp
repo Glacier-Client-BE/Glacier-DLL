@@ -20,8 +20,9 @@ bool SignatureManager::checkAboveOrEqual(int major, int minor, int patch) {
     return v.atLeast(major, minor, patch);
 }
 
-void SignatureManager::addSignature(std::string name, std::string idaPattern, int derefOffset) {
-    m_sigs[std::move(name)] = Entry{ std::move(idaPattern), derefOffset, 0 };
+void SignatureManager::addSignature(std::string name, std::string idaPattern,
+                                    int derefOffset, TargetKind kind) {
+    m_sigs[std::move(name)] = Entry{ std::move(idaPattern), derefOffset, kind, 0 };
 }
 
 void SignatureManager::addOffset(std::string name, std::ptrdiff_t offset) {
@@ -85,21 +86,34 @@ std::size_t SignatureManager::scanAll() {
                 if (work[i]->derefOffset >= 0) {
                     target = offsetFromSig(target, work[i]->derefOffset);
 
-                    // Any four bytes decode to *some* address, so a call-site
-                    // pattern that matched the wrong instruction still produces
-                    // a confident-looking pointer. Being inside the module is
-                    // not enough — the module includes .rdata and .data.
-                    // Requiring committed, executable, non-padding memory is
-                    // what separates "a function" from "some bytes".
+                    // Any four bytes decode to *some* address, so a pattern
+                    // that matched the wrong instruction still produces a
+                    // confident-looking pointer. Being inside the module is not
+                    // enough — the module spans .text, .rdata and .data alike.
                     //
-                    // This matters far more than it looks: an unvalidated
-                    // address gets a jump written over it, and if it wasn't
+                    // What separates a real hit from a plausible one is landing
+                    // in the *right kind* of memory, and that differs by entry:
+                    // a function must be executable, while a global must not be
+                    // (a "global" inside .text is a misdecoded displacement).
+                    // Checking every deref against the executable rule is what
+                    // broke Platform_GameCore, which points at a data global.
+                    //
+                    // This matters more than it looks for the code case: that
+                    // address gets a jump written over it, and if it was not
                     // code the result is a hung or corrupted game with nothing
                     // in the log to say why.
+                    const bool executable = isExecutable(target);
                     const char* problem = nullptr;
-                    if (!game.contains(target))       problem = " (matched, but its target is outside the module)";
-                    else if (!isExecutable(target))   problem = " (matched, but its target is not executable code — "
-                                                                "the call-site pattern resolved to the wrong place)";
+                    if (!game.contains(target)) {
+                        problem = " (matched, but its target is outside the module)";
+                    } else if (work[i]->kind == TargetKind::Code && !executable) {
+                        problem = " (matched, but its target is not executable code — "
+                                  "the call-site pattern resolved to the wrong place)";
+                    } else if (work[i]->kind == TargetKind::Data && executable) {
+                        problem = " (matched, but its target is executable code where a "
+                                  "data global was expected — the displacement was decoded "
+                                  "from the wrong instruction)";
+                    }
                     if (problem) {
                         work[i]->address = 0;
                         std::scoped_lock lock(failMutex);
