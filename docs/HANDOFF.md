@@ -86,9 +86,9 @@ These each cost a debugging cycle already. Don't re-derive them.
 
 ## Open bugs
 
-> **Phase 6 status:** bugs 1–4 have fixes committed but **not verified in-game**.
-> They compile; nobody has injected them yet. See § "Verifying Phase 6" at the
-> end of this file for exactly what to check. Bug 5 is untouched.
+> **Status:** bugs 1–5 all have fixes committed, and **none are verified
+> in-game**. They compile; nobody has injected them yet. See § "Verifying
+> phases 6 and 7" at the end of this file for exactly what to check.
 
 ### 1. Menu can't be interacted with — BLOCKS EVERYTHING ELSE
 
@@ -164,8 +164,9 @@ is fine as-is.
 Armor HUD draws durability bars and counts but no item textures, because the
 game's texture atlas isn't reachable from the overlay's private D3D device.
 
-This is a **feature, not a bug fix** — see Phase 7 below. It is the largest
-remaining piece of work. Do not attempt it before bugs 1–4 are closed.
+**Implemented — the first approach below.** See `src/sdk/ItemRendering.{h,cpp}`.
+The second was not attempted; the notes stay because they are still the
+fallback if the first turns out not to work in-game.
 
 Two viable approaches:
 - **Hook the game's own item renderer** and let it draw into the game's UI
@@ -174,6 +175,24 @@ Two viable approaches:
 - **Resolve `TextureGroup::getTexture`**, obtain the item atlas SRV, and sample
   it in our own composite shader with per-item UVs. More work, but keeps
   everything inside our renderer.
+
+What was built, and the two things about it that surprise people:
+
+- Icons are drawn by the **game**, from inside a `ScreenView::setupAndRender`
+  hook. HUD modules can't draw them directly — they call
+  `ItemRendering::submit()` during the overlay pass with a pixel rect and a
+  *description* of the slot (never an `ItemStack*`, which would be a pointer
+  captured across passes). The hook resolves the pointer fresh and draws.
+- Therefore icons **lag one frame** and render **under** the overlay. Armor HUD
+  now outlines its slots rather than filling them, so the fill doesn't wash out
+  the icon underneath.
+
+The one genuine guess in the path is `kPixelsPerSizeUnit` in
+`ItemRendering.cpp`. Upstream's own ArmorHUD is the only place that pins its
+size modifier to real pixels (it lays out on a 48px grid at a modifier of 1),
+so that is what the conversion is calibrated against. If icons come out
+uniformly too big or too small, change that constant and nothing else — every
+other number in the path is imported, not inferred.
 
 The user's own resource pack does this with JSON UI entity renderers
 (`C:\Users\User\Desktop\Glacier v7\packs\Glacier Client v7 [Main]\ui\glacier\
@@ -204,7 +223,9 @@ in it — never inline a pattern or struct offset elsewhere. See
 ## Roadmap — remaining phases
 
 Phases 0–5 are done (scaffold, hooks/SDK, EventBus + menu, module catalog,
-config persistence, version targeting + sync tooling).
+config persistence, version targeting + sync tooling). Phases 6 and 7 are
+written and compiling but **unverified in-game** — see the verification table
+at the end of this file.
 
 | Phase | Scope |
 |---|---|
@@ -287,7 +308,7 @@ drifted from `src/memory/Signatures.cpp` (it still lists entries such as
 `ClientInstance::update`, `GameMode::attack`, and `Container::begin` that the
 current generated table does not contain) — worth a pass.
 
-## Verifying Phase 6
+## Verifying phases 6 and 7
 
 What changed, and what confirms each piece. All of this is unverified: CI only
 proves it compiles.
@@ -298,6 +319,23 @@ proves it compiles.
 | 2 | No separate fix — the HUD editor reads the same `Input`. | With the menu open, drag the Coordinates widget; it should follow the cursor and stay where dropped after a close/reopen. |
 | 3 | `GameSDK::setCursorGrabbed` calls `ClientInstance::grabCursor` / `releaseCursor`; `Glacier::setCursorReleased` drives it and only falls back to `ShowCursor` when the call is unavailable. | With the menu open you should not be able to move or look. On attach, no `grabCursor/releaseCursor not resolved` warning in the console. |
 | 4 | Fullbright's gamma setting is now `15.0` default over a `0..25` range. | Enabling Fullbright at night, or in a cave, visibly brightens the world. |
+
+| 5 | `ItemRendering` hooks `ScreenView::setupAndRender` and replays icon requests inside the game's UI pass. Armor HUD submits one per slot. | Console shows `item rendering ready` at attach (rather than `item rendering unavailable — missing …`), and equipped armor shows real icons. |
+| — | `readStack` now fills `maxDurability` via `Item::getMaxDamage` and reads damage through `ItemStackBase::getDamageValue`. | Durability bars appear under damaged armor and shrink as it wears. They have **never** drawn before this, so "no bars" is a failure, not the status quo. |
+
+Order of diagnosis if icons don't appear, cheapest first:
+
+1. **`item rendering unavailable` in the log** → a signature didn't resolve; the
+   message names which. Nothing else to investigate.
+2. **`item rendering ready`, but nothing renders** → the hook is installed and
+   the draw is running. Most likely the argument order or the trailing constant
+   in `renderGuiItemNew`, or `BaseActorRenderContext::itemRenderer` reading a
+   junk pointer.
+3. **Icons appear in the wrong place or the wrong size** → the GUI-unit
+   conversion. Wrong *size* is `kPixelsPerSizeUnit`; wrong *position* is
+   `GuiData::guiScaleFrac` reading the wrong field.
+4. **Icons appear then vanish behind the HUD** → the overlay is painting over
+   them; check that Armor HUD's slot fill is still suppressed.
 
 If the menu still doesn't respond to clicks, the next thing to check is whether
 `D3DHook::window()` is the window the cursor is actually over —

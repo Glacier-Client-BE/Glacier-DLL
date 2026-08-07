@@ -69,6 +69,17 @@ no table, because it gets trusted.
 | `ClientInstance::grabCursor` | Called on menu close to hand the mouse back to gameplay | no | ⚠️ inherited |
 | `ClientInstance::releaseCursor` | Called on menu open — this is what actually pauses look/move | no | ⚠️ inherited |
 | `Actor::attack` | Observed read-only for Reach Display. `this` is the attacker, so no `GameMode` → player hop | no | ⚠️ inherited |
+| `ScreenView::setupAndRender` | Hooked for a foothold inside the game's UI pass, where item icons can be drawn. **Matched at a call site** — resolves via deref 1 | no | ⚠️ inherited |
+| `BaseActorRenderContext::BaseActorRenderContext` | Constructor, run on a zeroed buffer to build the context the item draw needs | no | ⚠️ inherited |
+| `ItemRenderer::renderGuiItemNew` | The icon draw itself. **Matched at a call site** — resolves via deref 1 | no | ⚠️ inherited |
+| `ItemStackBase::getDamageValue` | Real damage value for durability bars | no | ⚠️ inherited |
+
+Two of these resolve by **following a displacement** rather than by matching the
+function directly: the pattern sits on a `call` instruction, and the target is
+decoded from the operand. `SignatureManager::addSignature` takes that offset,
+and `tools/sync_signatures.py` checks our declared value against upstream's
+resolver on every sync — a wrong deref produces an address that resolves
+cleanly and then executes something unrelated, so it is not left to inference.
 
 ### Offsets
 
@@ -81,7 +92,15 @@ no table, because it gets trusted.
 | `ClientInstance::minecraftGame` | `0x1A0` | Seeded, not yet consumed | no | ⬜ unused |
 | `ClientInstance::levelRenderer` | `0x1B8` | Seeded, not yet consumed | no | ⬜ unused |
 | `ClientInstance::packetSender` | `0x1C8` | Seeded, not yet consumed | no | ⬜ unused |
-| `ClientInstance::guiData` | `0x648` | Seeded, not yet consumed — Phase 7 needs it for GUI scale | no | ⬜ unused |
+| `ClientInstance::guiData` | `0x648` | → `GuiData*`, for the GUI scale item drawing needs | no | ⚠️ inherited |
+| `GuiData::guiScaleFrac` | `0x60` | 1/GUI scale — converts Glacier's pixel layout to the game's GUI units | no | ⚠️ inherited |
+| `GuiData::guiScale` | `0x5C` | Seeded, not yet consumed | no | ⬜ unused |
+| `GuiData::screenSize` | `0x40` | Seeded, not yet consumed | no | ⬜ unused |
+| `MinecraftUIRenderContext::clientInstance` | `0x00` | Read out of the UI pass's context | no | ⚠️ inherited |
+| `MinecraftUIRenderContext::screenContext` | `0x08` | Read out of the UI pass's context | no | ⚠️ inherited |
+| `BaseActorRenderContext::itemRenderer` | `0x58` | → the `ItemRenderer` the icon draw is called on | no | ⚠️ inherited |
+| `BaseActorRenderContext::size` | `0x500` | How much to zero before running the constructor. Upstream marks this an over-estimate, so it is an upper bound rather than a measured size | no | ⚠️ inherited |
+| `Item::getMaxDamageVIndex` | `36` (`0x24`) | vtable **index** of `Item::getMaxDamage()` — 0 means not damageable | no | ⚠️ inherited |
 | `ClientInstance::options` | `0xD78` | Seeded, not yet consumed | no | ⬜ unused |
 | `Actor::entityContext` | `0x08` | Embedded `EntityContext` — the route into the entt registry, used for armor | no | ⚠️ inherited |
 | `Actor::stateVector` | `0x218` | → `StateVectorComponent*`; position lives in an ECS component | no | ⚠️ inherited |
@@ -107,6 +126,8 @@ SDK-backed HUD shows `--` — rather than crashing.
 | Fullbright | `Options::getGamma` | Toggling does nothing; logs a warning on enable |
 | Coordinates | the object-graph chain, `Actor::stateVector`, `StateVectorComponent::pos` | Shows `XYZ --`, or numbers that don't track movement |
 | Armor HUD | `Actor::entityContext` (+ the entt pin), `Inventory::getItemVIndex`, the `ItemStack` offsets | Empty slots while armoured, or nonsense counts |
+| Item icons (Armor HUD) | the four item-rendering signatures, `GuiData::guiScaleFrac`, the `BaseActorRenderContext` / `MinecraftUIRenderContext` offsets | Slots draw outlines, bars and counts but no icons; a warning naming the missing signature is logged at attach |
+| Durability bars | `ItemStackBase::getDamageValue`, `Item::getMaxDamageVIndex` | Bars don't draw, or show a wrong fraction |
 | Ping | `RakPeer::GetAveragePing` | Shows `--` |
 | Day Counter | `Dimension::getTimeOfDay` | Shows `Day --` |
 | Reach Display | `Actor::attack`, `Actor::stateVector` | Shows `Reach --` after a hit |
@@ -120,15 +141,6 @@ Attach-blocking entries cause `GameSDK::resolve()` to refuse the attach rather
 than continue into undefined behaviour. Non-blocking ones degrade the single
 feature that depends on them and log why.
 
-### Known gap: durability is never populated
-
-`ItemStack::maxDurability` is declared in `sdk::GameSDK::ItemStack` and read by
-Armor HUD, but `readStack` never assigns it — no signature for the max-damage
-lookup has been imported. It is therefore always `0`, which means
-`durabilityFraction()` always returns `1.0` and **Armor HUD's durability bars
-never draw**, silently. Closing this needs `ItemStackBase::getDamageValue` and a
-max-damage source; both exist upstream in Latite's `Addresses.h`.
-
 ## Not yet imported
 
 Each arrives with the feature that consumes it, so an unresolved-signature
@@ -136,15 +148,12 @@ warning always corresponds to something that actually exists.
 
 | Name | Kind | Needed for | Phase |
 |---|---|---|---|
-| `ItemRenderer::renderGuiItemNew` | signature | Drawing real item icons | 7 |
-| `BaseActorRenderContext::BaseActorRenderContext` | signature | Constructing the render context `renderGuiItemNew` needs | 7 |
-| `ItemStackBase::getDamageValue` | signature | Real durability values (see the gap above) | 7 |
-| `ScreenContext` / `GuiData::screenSize` | offsets | GUI-space coordinates for item draws | 7 |
 | `Level::getRuntimeActorList` | signature | Entity enumeration (Target HUD, Player List) | 8 |
 | `LocalPlayer::applyTurnDelta` | signature | Snap Look | 8 |
+| `Actor::getNameTag` | signature | Target HUD | 8 |
 | `GameRenderer::viewMatrix`, `GameRenderer::projMatrix` | offsets | World→screen projection | 8 |
 
-**Phase 7's real progress metric is this table**, not module count — the modules
+**Phase 8's real progress metric is this table**, not module count — the modules
 are mechanical once their signatures resolve.
 
 ## Keeping this in sync
