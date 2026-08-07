@@ -4,6 +4,7 @@
 #include "core/EventBus.h"
 #include "hook/D3DHook.h"
 #include "hook/HookManager.h"
+#include "memory/GameVersion.h"
 #include "module/ModuleManager.h"
 #include "sdk/GameSDK.h"
 #include "sdk/ItemRendering.h"
@@ -48,12 +49,15 @@ void Glacier::start(HMODULE self) {
     }
 
     sdk::GameSDK::get().installHooks();
-    sdk::ItemRendering::get().installHooks();
 
     // Restore saved settings. Deliberately after installHooks(): loading can
     // re-enable a module, whose onEnable() may depend on a hook being live, and
     // a module that reports "my hook didn't resolve" should do so accurately.
     Config::get().load();
+
+    // After the config, because whether this installs anything at all is a
+    // config setting — see the comment on ItemRendering::setEnabled.
+    sdk::ItemRendering::get().installHooks();
 
     // 4. Renderer + present wiring. The overlay owns a private D3D device, so
     //    it is created before the first frame arrives rather than lazily.
@@ -70,6 +74,16 @@ void Glacier::start(HMODULE self) {
 
         auto& gfx = ui::Renderer::get();
         if (!gfx.beginFrame(sc, dev, ctx)) return;
+
+        // Nothing of ours is drawn outside a world — no HUD over the main menu,
+        // no menu where there is no player to configure. The frame is still
+        // completed rather than returned from early: bailing between beginFrame
+        // and endFrame leaves the keyed mutex on the wrong key and deadlocks
+        // every frame after it. An empty overlay composites to nothing.
+        if (!sdk::GameSDK::get().inGame()) {
+            gfx.endFrame();
+            return;
+        }
 
         // Sample the mouse before anything hit-tests it. Polled rather than
         // taken from WM_* messages because Bedrock consumes the mouse through
@@ -107,6 +121,7 @@ void Glacier::start(HMODULE self) {
     // 5. Capture window input for the menu and module keybinds.
     if (HWND hwnd = d3d.window()) {
         installWndProc(hwnd);
+        brandWindow(hwnd);
     } else {
         LOG_WARN("no game window — menu and keybinds unavailable");
     }
@@ -137,13 +152,24 @@ void Glacier::start(HMODULE self) {
         // Do not add a second toggle in the WndProc: the two fire at different
         // times for one physical press and cancel each other out.
         {
+            // The menu belongs to a play session. Outside one there is nothing
+            // to configure against, and leaving it open across a disconnect
+            // would strand the released cursor — so leaving a world closes it.
+            const bool inGame = sdk::GameSDK::get().inGame();
+            if (!inGame && ui::Menu::get().open()) {
+                ui::Menu::get().setOpen(false);
+                setCursorReleased(false);
+            }
+
             const bool menuDown = (GetAsyncKeyState(m_menuKey)    & 0x8000) ||
                                   (GetAsyncKeyState(m_menuKeyAlt) & 0x8000);
-            if (menuDown && !m_menuKeyWasDown.load(std::memory_order_relaxed)
-                         && !ui::Menu::get().capturingKey()) {
+            if (inGame && menuDown && !m_menuKeyWasDown.load(std::memory_order_relaxed)
+                       && !ui::Menu::get().capturingKey()) {
                 ui::Menu::get().toggle();
                 setCursorReleased(ui::Menu::get().open());
             }
+            // Tracked even when not in game, so walking back into a world with
+            // the key still held doesn't immediately open the menu.
             m_menuKeyWasDown.store(menuDown, std::memory_order_relaxed);
         }
 
@@ -171,6 +197,7 @@ void Glacier::start(HMODULE self) {
     // the cursor is handed back), stop receiving frames, remove every hook, then
     // destroy the renderer and the modules those hooks could have called into.
     removeWndProc();
+    restoreWindowTitle();
     ui::Menu::get().setOpen(false);
 
     // Final save before anything is torn down, so state changed since the last
@@ -199,6 +226,35 @@ void Glacier::installWndProc(HWND hwnd) {
     m_origWndProc = reinterpret_cast<WNDPROC>(
         SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&Glacier::wndProc)));
     LOG_INFO("WndProc hooked");
+}
+
+void Glacier::brandWindow(HWND hwnd) {
+    // Keep the original so unloading leaves the window exactly as found — the
+    // client is unloadable at runtime, and a title that outlives it would be a
+    // visible lie about what's attached.
+    wchar_t original[256]{};
+    if (GetWindowTextW(hwnd, original, static_cast<int>(std::size(original))) > 0) {
+        m_originalTitle = original;
+    }
+
+    // Report the build the game actually is, not the one Glacier targets. If
+    // those differ, the title is the earliest place a user sees it.
+    const auto& v = memory::gameVersion();
+    wchar_t title[256]{};
+    if (v.valid) {
+        swprintf_s(title, L"Glacier Client for Minecraft: Bedrock Edition %d.%d.%d",
+                   v.major, v.minor, v.patch);
+    } else {
+        swprintf_s(title, L"Glacier Client for Minecraft: Bedrock Edition");
+    }
+    SetWindowTextW(hwnd, title);
+}
+
+void Glacier::restoreWindowTitle() {
+    if (m_window && !m_originalTitle.empty()) {
+        SetWindowTextW(m_window, m_originalTitle.c_str());
+        m_originalTitle.clear();
+    }
 }
 
 void Glacier::removeWndProc() {

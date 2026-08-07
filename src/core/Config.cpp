@@ -3,6 +3,7 @@
 #include "../Glacier.h"
 #include "../module/Module.h"
 #include "../module/ModuleManager.h"
+#include "../sdk/ItemRendering.h"
 #include "../util/Logger.h"
 
 #include <ShlObj.h>
@@ -127,6 +128,17 @@ void applyKey(Module& module, const std::string& key, const std::string& value) 
 constexpr const char* kClientSection = "Glacier";
 
 void applyClientKey(const std::string& key, const std::string& value) {
+    // Not a key code: the one client setting that isn't a keybind.
+    if (key == "itemIcons") {
+        bool on = false;
+        if (!parseBool(value, on)) {
+            LOG_WARN("config: bad value for [Glacier] itemIcons = '{}'", value);
+            return;
+        }
+        sdk::ItemRendering::get().setEnabled(on);
+        return;
+    }
+
     int vk = 0;
     if (!parseInt(value, vk)) {
         LOG_WARN("config: bad value for [Glacier] {} = '{}'", key, value);
@@ -236,6 +248,24 @@ bool Config::save() {
 
         out << "# Glacier configuration\n"
             << "# Rewritten automatically; edits are preserved for known keys only.\n\n";
+
+        // Written out rather than left implicit: these are the settings a user
+        // needs when something is wrong (the menu key when the menu won't open,
+        // itemIcons when icons are suspected of crashing), and a key you cannot
+        // discover without reading the source may as well not exist.
+        {
+            auto& client = Glacier::get();
+            out << '[' << kClientSection << "]\n"
+                << "# Virtual-key codes. Both menu keys open the menu.\n"
+                << "menuKey = "    << client.menuKey()    << '\n'
+                << "menuKeyAlt = " << client.menuKeyAlt() << '\n'
+                << "unloadKey = "  << client.unloadKey()  << '\n'
+                << "# Draw real item icons using the game's own renderer.\n"
+                << "# Off by default: it calls into game code located by pattern, and\n"
+                << "# an incorrect address there can crash the game on world load.\n"
+                << "itemIcons = "
+                << (sdk::ItemRendering::get().enabled() ? "true" : "false") << "\n\n";
+        }
 
         for (const auto& module : ModuleManager::get().modules()) {
             out << '[' << module->name() << "]\n";

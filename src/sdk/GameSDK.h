@@ -74,6 +74,15 @@ public:
     ClientInstance* clientInstance() const;
     LocalPlayer*    localPlayer() const;
 
+    // True only when the player is actually in a world. The main menu, the
+    // loading screen and the moment after a disconnect all report false.
+    //
+    // Glacier's overlay and menu are gated on this, the way Latite and Flarial
+    // gate theirs: HUD widgets over the main menu are noise, and a menu that
+    // opens where there is no player to configure anything for invites exactly
+    // the kind of null-deref that looks like "the client crashes on startup".
+    bool inGame() const { return localPlayer() != nullptr; }
+
     std::optional<Vec3> playerPosition() const;
 
     // Fullbright: while the override is >= 0 the getGamma hook returns it

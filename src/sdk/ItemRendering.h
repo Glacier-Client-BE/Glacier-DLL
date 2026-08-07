@@ -65,9 +65,24 @@ public:
         return instance;
     }
 
-    // Installs the ScreenView hook. Safe to call when the signatures are
-    // missing — it logs what is unavailable and every later submit() becomes a
-    // no-op, so HUD widgets degrade to "no icons" rather than misbehaving.
+    // OFF BY DEFAULT — set `itemIcons = true` under [Glacier] in config.ini.
+    //
+    // This path is the only part of Glacier that hands control to a game
+    // function we located by matching a *call site* rather than the function
+    // itself. If that match is wrong, calling through it faults the moment the
+    // UI first renders, which presents as "the game crashes when a world
+    // loads" and takes the whole client with it. Until someone confirms it
+    // works on a real build, the default has to be the one that cannot break a
+    // session that would otherwise be fine.
+    //
+    // Must be called before installHooks() to have any effect.
+    void setEnabled(bool enabled) { m_enabled = enabled; }
+    bool enabled() const { return m_enabled; }
+
+    // Installs the ScreenView hook, if enabled. Safe to call when the
+    // signatures are missing — it logs what is unavailable and every later
+    // submit() becomes a no-op, so HUD widgets degrade to "no icons" rather
+    // than misbehaving.
     void installHooks();
 
     // True when every signature the draw path needs resolved. HUD modules query
@@ -88,6 +103,11 @@ public:
 private:
     ItemRendering() = default;
 
+    // Turns the feature off for the rest of the session after a fault, naming
+    // what failed. Called from the render path, so it must not throw.
+    void disableAfterFault(const char* what);
+
+    bool m_enabled = false;
     bool m_available = false;
 
     // Two batches: one being filled by the overlay pass, one ready for the game

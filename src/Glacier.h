@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <string>
 #include <Windows.h>
 
 // Top-level client object. Owns startup ordering and the matching reverse
@@ -47,6 +48,11 @@ private:
 
     void installWndProc(HWND hwnd);
     void removeWndProc();
+
+    // Retitles the game window to name the client and the detected game build,
+    // and puts the original back on unload.
+    void brandWindow(HWND hwnd);
+    void restoreWindowTitle();
     static LRESULT CALLBACK wndProc(HWND, UINT, WPARAM, LPARAM);
 
     // Hands the cursor between the game and the menu by driving the game's own
@@ -64,6 +70,7 @@ private:
     HMODULE           m_self        = nullptr;
     WNDPROC           m_origWndProc = nullptr;
     HWND              m_window      = nullptr;
+    std::wstring      m_originalTitle;
     int               m_menuKey     = 'G';
     int               m_menuKeyAlt  = 'M';
     int               m_unloadKey   = VK_END;

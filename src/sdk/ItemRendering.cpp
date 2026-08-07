@@ -1,6 +1,7 @@
 #include "ItemRendering.h"
 
 #include "GameSDK.h"
+#include "../core/Config.h"
 #include "../hook/HookManager.h"
 #include "../memory/Memory.h"
 #include "../memory/SignatureManager.h"
@@ -55,9 +56,67 @@ void __fastcall hkSetupAndRender(void* screenView, void* uiRenderContext) {
 // first thing to change — nothing else in the path is a guess.
 constexpr float kPixelsPerSizeUnit = 48.0f;
 
+// Runs the part that actually enters game code, under a structured-exception
+// guard. Returns false if it faulted.
+//
+// A guard is warranted here and almost nowhere else in Glacier: every value
+// this path uses is imported and unverified, several of them are function
+// addresses, and the cost of one being wrong is the player's game dying
+// mid-session rather than a HUD looking wrong. Catching the fault lets the
+// client switch the feature off and keep running.
+//
+// Split into its own function because MSVC will not compile __try in a
+// function that needs C++ object unwinding, and deliberately takes only
+// pointers and PODs so there is nothing to unwind here.
+bool drawBatchGuarded(void* itemRenderer, void* context,
+                      const ItemDraw* draws, std::size_t count, float frac) {
+    __try {
+        auto& sdk = GameSDK::get();
+        for (std::size_t i = 0; i < count; ++i) {
+            const ItemDraw& draw = draws[i];
+
+            void* stack = (draw.ref.source == ItemRef::Source::Armor)
+                        ? sdk.rawArmorStack(draw.ref.index)
+                        : sdk.rawHotbarStack(draw.ref.index);
+            if (!stack) continue;
+
+            // Glacier lays HUDs out in swapchain pixels; the game's UI renderer
+            // works in GUI units. One multiply bridges them.
+            const float x = draw.x * frac;
+            const float y = draw.y * frac;
+            const float sizeUnits = (draw.size / kPixelsPerSizeUnit) * frac;
+
+            s_renderGuiItem(itemRenderer, context, stack, /*mode*/ 0, x, y,
+                            /*enchantGlint*/ false, draw.opacity, /*a9*/ 1.0f,
+                            sizeUnits * 3.0f, /*unknown*/ 17);
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Same reasoning, for the constructor call.
+bool constructContextGuarded(void* context, void* screenContext,
+                             void* clientInstance, void* minecraftGame) {
+    __try {
+        s_barcCtor(context, screenContext, clientInstance, minecraftGame);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 } // namespace
 
 void ItemRendering::installHooks() {
+    if (!m_enabled) {
+        LOG_INFO("item icons disabled (set 'itemIcons = true' under [Glacier] in {} to try them) "
+                 "— HUDs will draw everything except item icons",
+                 Config::path());
+        return;
+    }
+
     auto& sigs  = SignatureManager::get();
     auto& hooks = HookManager::get();
 
@@ -151,28 +210,26 @@ void ItemRendering::drawPending(void* uiRenderContext) {
     }
 
     std::memset(context, 0, contextSize);
-    s_barcCtor(context, screenContext, clientInstance, minecraftGame);
+
+    if (!constructContextGuarded(context, screenContext, clientInstance, minecraftGame)) {
+        disableAfterFault("BaseActorRenderContext::BaseActorRenderContext");
+        return;
+    }
 
     void* itemRenderer = memory::memberAt<void*>(
         context, sigs.offset("BaseActorRenderContext::itemRenderer"));
     if (!itemRenderer) return;
 
-    for (const auto& draw : batch) {
-        void* stack = (draw.ref.source == ItemRef::Source::Armor)
-                    ? sdk.rawArmorStack(draw.ref.index)
-                    : sdk.rawHotbarStack(draw.ref.index);
-        if (!stack) continue;
-
-        // Glacier lays HUDs out in swapchain pixels; the game's UI renderer
-        // works in GUI units. One multiply bridges them.
-        const float x = draw.x * frac;
-        const float y = draw.y * frac;
-        const float sizeUnits = (draw.size / kPixelsPerSizeUnit) * frac;
-
-        s_renderGuiItem(itemRenderer, context, stack, /*mode*/ 0, x, y,
-                        /*enchantGlint*/ false, draw.opacity, /*a9*/ 1.0f,
-                        sizeUnits * 3.0f, /*unknown*/ 17);
+    if (!drawBatchGuarded(itemRenderer, context, batch.data(), batch.size(), frac)) {
+        disableAfterFault("ItemRenderer::renderGuiItemNew");
     }
+}
+
+void ItemRendering::disableAfterFault(const char* what) {
+    m_available = false;
+    LOG_ERROR("item icons disabled: '{}' faulted, which means its address or its "
+              "arguments are wrong for this build. The rest of Glacier is unaffected. "
+              "Leave 'itemIcons' off under [Glacier] until this is re-derived.", what);
 }
 
 } // namespace glacier::sdk
