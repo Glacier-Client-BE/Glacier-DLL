@@ -44,6 +44,7 @@ unresolved signatures, that belief was wrong, and the fix is one file.
 | ✅ confirmed | Observed resolving against a running game, feature verified working |
 | ⚠️ inherited | Imported and believed correct for the target build, **never verified in-game by this project** |
 | ❌ unresolved | Known not to resolve; needs re-deriving |
+| ⬜ unused | Seeded and available, but nothing reads it yet — so a wrong value here breaks nothing today |
 | ⬜ not imported | Needed by a future phase, deliberately not seeded yet |
 
 Nothing is marked ✅ until someone has injected a build and watched the feature
@@ -51,26 +52,52 @@ work. Compiling is not confirmation.
 
 ## Seeded
 
-| Name | Kind | Purpose | Attach-blocking | Status |
+This table mirrors `seedBedrock()` in
+[`src/memory/Signatures.cpp`](../src/memory/Signatures.cpp) entry for entry. If
+you add or remove a mapping in `tools/sync_signatures.py`, update this table in
+the same commit — a table that disagrees with the generated file is worse than
+no table, because it gets trusted.
+
+### Signatures
+
+| Name | Purpose | Attach-blocking | Status |
+|---|---|---|---|
+| `Platform_GameCore` | The global that roots the whole object graph. Not called — the RIP-relative operand at +3 is decoded to find the global itself | **yes** | ⚠️ inherited |
+| `Options::getGamma` | Hooked by Fullbright to return an override brightness | no | ⚠️ inherited |
+| `RakPeer::GetAveragePing` | Hooked read-only to cache RTT for Ping display | no | ⚠️ inherited |
+| `Dimension::getTimeOfDay` | Hooked read-only to cache world time for Day Counter | no | ⚠️ inherited |
+| `ClientInstance::grabCursor` | Called on menu close to hand the mouse back to gameplay | no | ⚠️ inherited |
+| `ClientInstance::releaseCursor` | Called on menu open — this is what actually pauses look/move | no | ⚠️ inherited |
+| `Actor::attack` | Observed read-only for Reach Display. `this` is the attacker, so no `GameMode` → player hop | no | ⚠️ inherited |
+
+### Offsets
+
+| Name | Value | Purpose | Attach-blocking | Status |
 |---|---|---|---|---|
-| `ClientInstance::update` | signature | Hooked to capture the live `ClientInstance` each tick | **yes** | ⚠️ inherited |
-| `ClientInstance::getLocalPlayerIndex` | signature | Call site whose displacement encodes `getLocalPlayer`'s vtable index | **yes** | ⚠️ inherited |
-| `Options::getGamma` | signature | Hooked by Fullbright to return an override brightness | no | ⚠️ inherited |
-| `ItemStack::getMaxDamage` | signature | Called for durability bars | no | ⚠️ inherited |
-| `GameMode::attack` | signature | Observed (read-only) for Reach Display | no | ⚠️ inherited |
-| `ClientInstance::grabCursor` | signature | Called on menu close to hand the mouse back to gameplay | no | ⚠️ inherited |
-| `ClientInstance::releaseCursor` | signature | Called on menu open — this is what actually pauses look/move | no | ⚠️ inherited |
-| `RakPeer::GetAveragePing` | signature | Caches RTT for Ping display | no | ⚠️ inherited |
-| `TimeChanger` | signature | Caches world time for Day Counter | no | ⚠️ inherited |
-| `Gamemode::player` | offset `0x8` | GameMode -> owning Player, for Reach | no | ⚠️ inherited |
-| `Actor::position` | offset `0x44` | `Vec3` of an entity's feet — Coordinates | no | ⚠️ inherited |
-| `Actor::armorContainer` | offset `0x1670` | Armor HUD | no | ⚠️ inherited |
-| `Player::supplies` | offset `0x9B8` | `PlayerInventory*` — held item | no | ⚠️ inherited |
-| `PlayerInventory::container` | offset `0x70` | Hotbar + main container | no | ⚠️ inherited |
-| `PlayerInventory::selectedSlot` | offset `0x10` | Which hotbar slot is held | no | ⚠️ inherited |
-| `Container::begin` / `Container::end` | offsets `0x00` / `0x08` | `std::vector<ItemStack>` bounds | no | ⚠️ inherited |
-| `ItemStack::stride` | offset `0x88` | Slot stride within a container | no | ⚠️ inherited |
-| `ItemStack::item` / `count` / `auxValue` | offsets `0x08` / `0x20` / `0x22` | Slot contents | no | ⚠️ inherited |
+| `WinMain::platformGameCore` | `0x08` | Deref of the `Platform_GameCore` global → `WinMain`; +0x08 → `Platform_GameCore*` | no¹ | ⚠️ inherited |
+| `Platform_GameCore::minecraftGame` | `0x18` | → `MinecraftGame*` | no¹ | ⚠️ inherited |
+| `MinecraftGame::clientInstances` | `0x938` | `map<uint8, shared_ptr<ClientInstance>>`; entry 0 is the local one | no¹ | ⚠️ inherited |
+| `ClientInstance::getLocalPlayerVIndex` | `31` | vtable **index** (not a byte offset) of `getLocalPlayer` | **yes** | ⚠️ inherited |
+| `ClientInstance::minecraftGame` | `0x1A0` | Seeded, not yet consumed | no | ⬜ unused |
+| `ClientInstance::levelRenderer` | `0x1B8` | Seeded, not yet consumed | no | ⬜ unused |
+| `ClientInstance::packetSender` | `0x1C8` | Seeded, not yet consumed | no | ⬜ unused |
+| `ClientInstance::guiData` | `0x648` | Seeded, not yet consumed — Phase 7 needs it for GUI scale | no | ⬜ unused |
+| `ClientInstance::options` | `0xD78` | Seeded, not yet consumed | no | ⬜ unused |
+| `Actor::entityContext` | `0x08` | Embedded `EntityContext` — the route into the entt registry, used for armor | no | ⚠️ inherited |
+| `Actor::stateVector` | `0x218` | → `StateVectorComponent*`; position lives in an ECS component | no | ⚠️ inherited |
+| `StateVectorComponent::pos` | `0x00` | `Vec3` position (`IEntityComponent` is an empty base) | no | ⚠️ inherited |
+| `Player::supplies` | `0x5B8` | → `PlayerInventory*` | no | ⚠️ inherited |
+| `PlayerInventory::selectedSlot` | `0x10` | Which hotbar slot is held | no | ⚠️ inherited |
+| `PlayerInventory::inventory` | `0xB8` | → the backing `Inventory` | no | ⚠️ inherited |
+| `Inventory::getItemVIndex` | `7` | vtable **index** of `Inventory::getItem(int)` — the game bounds-checks for us | no | ⚠️ inherited |
+| `ItemStack::item` | `0x08` | `Item**`; null means the slot is air | no | ⚠️ inherited |
+| `ItemStack::auxValue` | `0x20` | `int16`, read as the damage value | no | ⚠️ inherited |
+| `ItemStack::count` | `0x22` | `uint8` stack size | no | ⚠️ inherited |
+| `ItemStack::size` | `0x98` | `sizeof(ItemStack)`. Seeded, not yet consumed — every container read goes through the virtual `getItem`, so no stride arithmetic happens | no | ⬜ unused |
+
+¹ Not checked individually at attach, but the chain they form is what
+`clientInstance()` walks. A wrong value here degrades to `nullptr` — every
+SDK-backed HUD shows `--` — rather than crashing.
 
 ### Which modules need which
 
@@ -78,39 +105,46 @@ work. Compiling is not confirmation.
 |---|---|---|
 | Watermark, FPS Counter, Keystrokes, CPS Counter, Clock, Module List, Null Movement | **nothing** | Can only break if the overlay itself is broken |
 | Fullbright | `Options::getGamma` | Toggling does nothing; logs a warning on enable |
-| Coordinates | `ClientInstance::*`, `Actor::position` | Shows `XYZ --`, or numbers that don't track movement |
-| Armor HUD | the container + `ItemStack` offsets | Empty slots while armoured, or nonsense counts |
+| Coordinates | the object-graph chain, `Actor::stateVector`, `StateVectorComponent::pos` | Shows `XYZ --`, or numbers that don't track movement |
+| Armor HUD | `Actor::entityContext` (+ the entt pin), `Inventory::getItemVIndex`, the `ItemStack` offsets | Empty slots while armoured, or nonsense counts |
 | Ping | `RakPeer::GetAveragePing` | Shows `--` |
-| Day Counter | `TimeChanger` | Shows `Day --` |
-| Reach Display | `GameMode::attack`, `Gamemode::player` | Shows `Reach --` after a hit |
+| Day Counter | `Dimension::getTimeOfDay` | Shows `Day --` |
+| Reach Display | `Actor::attack`, `Actor::stateVector` | Shows `Reach --` after a hit |
 | Menu (pause) | `ClientInstance::grabCursor` / `releaseCursor` | Menu still opens, but you can move and look behind it; a warning is logged at attach |
 
 Coordinates is the cheapest end-to-end check of the SDK: if it tracks your
-movement, the whole signature → hook → `ClientInstance` → `LocalPlayer` chain
+movement, the whole signature → global → `ClientInstance` → `LocalPlayer` chain
 works. Check it before debugging anything else.
 
 Attach-blocking entries cause `GameSDK::resolve()` to refuse the attach rather
 than continue into undefined behaviour. Non-blocking ones degrade the single
 feature that depends on them and log why.
 
+### Known gap: durability is never populated
+
+`ItemStack::maxDurability` is declared in `sdk::GameSDK::ItemStack` and read by
+Armor HUD, but `readStack` never assigns it — no signature for the max-damage
+lookup has been imported. It is therefore always `0`, which means
+`durabilityFraction()` always returns `1.0` and **Armor HUD's durability bars
+never draw**, silently. Closing this needs `ItemStackBase::getDamageValue` and a
+max-damage source; both exist upstream in Latite's `Addresses.h`.
+
 ## Not yet imported
 
-Deliberately left out of Phase 1. Each arrives with the module that consumes it,
-so that an unresolved-signature warning always corresponds to a feature that
-actually exists.
+Each arrives with the feature that consumes it, so an unresolved-signature
+warning always corresponds to something that actually exists.
 
 | Name | Kind | Needed for | Phase |
 |---|---|---|---|
-| `Level::getRuntimeActorList` | signature | Hitboxes (entity enumeration) | 5 |
-| `BobHurt` | signature | Java View Bobbing | 5 |
-| `MinimalViewBobbing` | signature | Minimal View Bobbing (NOP patch site) | 5 |
-| `ForceCoordsOption` | signature | Force Coords | 5 |
-| `AppPlatform::readAssetFile` | signature | Material Bin Loader | 5 |
-| `LocalPlayer::applyTurnDelta` | signature | Snap Look | 5 |
-| `GameRenderer::viewMatrix`, `GameRenderer::projMatrix`, `LevelRenderer*`, `GuiData::screenSize` | offsets | World→screen projection for Hitboxes | 5 |
-| `ClientInstance::minecraftGame`, `guiData`, `levelRenderer`, `camera`, `packetSender` | offsets | Various | 5 |
+| `ItemRenderer::renderGuiItemNew` | signature | Drawing real item icons | 7 |
+| `BaseActorRenderContext::BaseActorRenderContext` | signature | Constructing the render context `renderGuiItemNew` needs | 7 |
+| `ItemStackBase::getDamageValue` | signature | Real durability values (see the gap above) | 7 |
+| `ScreenContext` / `GuiData::screenSize` | offsets | GUI-space coordinates for item draws | 7 |
+| `Level::getRuntimeActorList` | signature | Entity enumeration (Target HUD, Player List) | 8 |
+| `LocalPlayer::applyTurnDelta` | signature | Snap Look | 8 |
+| `GameRenderer::viewMatrix`, `GameRenderer::projMatrix` | offsets | World→screen projection | 8 |
 
-**Phase 5's real progress metric is this table**, not module count — the modules
+**Phase 7's real progress metric is this table**, not module count — the modules
 are mechanical once their signatures resolve.
 
 ## Keeping this in sync
