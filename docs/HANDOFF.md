@@ -310,6 +310,30 @@ drifted from `src/memory/Signatures.cpp` (it still lists entries such as
 `ClientInstance::update`, `GameMode::attack`, and `Container::begin` that the
 current generated table does not contain) — worth a pass.
 
+## The wrong-window bug (fixed — read this before debugging input)
+
+For a while, **Glacier was hooking its own debug console instead of the game.**
+`findGameWindow()` returned the first top-level visible window owned by the
+process, and `Logger::attachConsole()` runs before it — so a freshly allocated
+console won the enumeration.
+
+One wrong `HWND` produced four unrelated-looking symptoms:
+
+- the window title changed on the console, not the game;
+- the menu did not respond to the mouse at all (WndProc on the wrong window);
+- hovering highlighted *a different widget than the one under the cursor*,
+  because `ScreenToClient` converted against the console's client origin;
+- CPS Counter never counted.
+
+The fix is to stop guessing: `DXGI_SWAP_CHAIN_DESC::OutputWindow` from the first
+real frame is authoritative, and the WndProc and branding re-attach to it. The
+pre-frame guess also skips console window classes now.
+
+**The lesson worth keeping:** several symptoms that look like separate features
+being broken can be one shared input assumption. Before debugging a UI
+interaction bug here, confirm which window is hooked — the log line `game window
+corrected to 0x…` tells you it happened.
+
 ## The world-load crash
 
 **Symptom:** injected fine, then the game crashed after loading a world.
