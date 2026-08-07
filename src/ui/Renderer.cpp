@@ -25,6 +25,20 @@ namespace {
 constexpr UINT64 kKeyWrite = 0;
 constexpr UINT64 kKeyRead  = 1;
 
+// Both mutex acquires happen on the GAME'S RENDER THREAD, so this number is the
+// worst-case stall Glacier can inflict on the game every single frame.
+//
+// It used to be 1000ms. That turns any mutex-state bug — a missed release, a
+// bailed-out composite — into a game that renders at one frame per second and
+// stops answering window messages, which Windows reports as "Not Responding".
+// A hung game is a far worse failure than an overlay that skips a frame.
+//
+// The two sides of this mutex are our own render path handing off to itself, so
+// under normal operation the key is always already free and the wait is zero.
+// If it is ever contended for longer than a couple of milliseconds, something
+// is wrong and the right answer is to drop the frame, not to block the game.
+constexpr DWORD kMutexTimeoutMs = 4;
+
 template <typename T>
 void safeRelease(T*& p) {
     if (p) {
@@ -431,7 +445,7 @@ bool Renderer::beginFrame(IDXGISwapChain* swapChain, ID3D11Device* device,
     // A failure here almost always means a previous frame released the mutex
     // with a key nobody acquires, so state it plainly rather than silently
     // drawing nothing forever.
-    const HRESULT acquired = m_writeMutex->AcquireSync(kKeyWrite, 1000);
+    const HRESULT acquired = m_writeMutex->AcquireSync(kKeyWrite, kMutexTimeoutMs);
     if (FAILED(acquired)) {
         warnOnce("overlay keyed mutex acquire failed — the overlay will not draw");
         return false;
@@ -508,19 +522,31 @@ void Renderer::composite(ID3D11DeviceContext* context) {
     if (!context || !m_srv || !m_readMutex) {
         warnOnce("overlay composite skipped — no shared view; recovering the mutex");
         if (m_readMutex) {
-            if (SUCCEEDED(m_readMutex->AcquireSync(kKeyRead, 100))) {
+            if (SUCCEEDED(m_readMutex->AcquireSync(kKeyRead, kMutexTimeoutMs))) {
                 m_readMutex->ReleaseSync(kKeyWrite);
             }
         } else if (m_writeMutex) {
             // Hand it back on our own side so the next frame can proceed.
-            if (SUCCEEDED(m_writeMutex->AcquireSync(kKeyRead, 100))) {
+            if (SUCCEEDED(m_writeMutex->AcquireSync(kKeyRead, kMutexTimeoutMs))) {
                 m_writeMutex->ReleaseSync(kKeyWrite);
             }
         }
         return;
     }
-    if (FAILED(m_readMutex->AcquireSync(kKeyRead, 1000))) {
+    if (FAILED(m_readMutex->AcquireSync(kKeyRead, kMutexTimeoutMs))) {
+        // The comment above is not decoration: returning here without handing
+        // the key back to kKeyWrite is what strands every later frame on a key
+        // nobody will ever release. Try to recover it on our own side; if even
+        // that fails, the surface is unrecoverable, so drop it and let the next
+        // beginFrame rebuild from scratch rather than blocking forever.
         warnOnce("overlay composite could not acquire the shared texture");
+        if (SUCCEEDED(m_writeMutex->AcquireSync(kKeyRead, kMutexTimeoutMs))) {
+            m_writeMutex->ReleaseSync(kKeyWrite);
+        } else {
+            warnOnce("overlay keyed mutex is stuck — dropping the shared surface to recover");
+            releaseGameResources();
+            releaseSharedSurface();
+        }
         return;
     }
 

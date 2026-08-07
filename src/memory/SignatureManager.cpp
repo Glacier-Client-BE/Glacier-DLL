@@ -84,10 +84,26 @@ std::size_t SignatureManager::scanAll() {
                 std::uintptr_t target = *hit;
                 if (work[i]->derefOffset >= 0) {
                     target = offsetFromSig(target, work[i]->derefOffset);
-                    if (!game.contains(target)) {
+
+                    // Any four bytes decode to *some* address, so a call-site
+                    // pattern that matched the wrong instruction still produces
+                    // a confident-looking pointer. Being inside the module is
+                    // not enough — the module includes .rdata and .data.
+                    // Requiring committed, executable, non-padding memory is
+                    // what separates "a function" from "some bytes".
+                    //
+                    // This matters far more than it looks: an unvalidated
+                    // address gets a jump written over it, and if it wasn't
+                    // code the result is a hung or corrupted game with nothing
+                    // in the log to say why.
+                    const char* problem = nullptr;
+                    if (!game.contains(target))       problem = " (matched, but its target is outside the module)";
+                    else if (!isExecutable(target))   problem = " (matched, but its target is not executable code — "
+                                                                "the call-site pattern resolved to the wrong place)";
+                    if (problem) {
                         work[i]->address = 0;
                         std::scoped_lock lock(failMutex);
-                        failures.push_back(*names[i] + " (matched, but its target is outside the module)");
+                        failures.push_back(*names[i] + problem);
                         continue;
                     }
                 }

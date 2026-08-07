@@ -105,4 +105,24 @@ std::uintptr_t followCall(std::uintptr_t address) {
     return address + 5 + rel;
 }
 
+bool isExecutable(std::uintptr_t address) {
+    if (!address) return false;
+
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &mbi, sizeof(mbi)) != sizeof(mbi)) {
+        return false;
+    }
+    if (mbi.State != MEM_COMMIT) return false;
+
+    constexpr DWORD kExecutable = PAGE_EXECUTE | PAGE_EXECUTE_READ
+                                | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    if ((mbi.Protect & kExecutable) == 0) return false;
+
+    // Alignment padding between functions. Landing here means the displacement
+    // was decoded from the wrong instruction — the page is right, the address
+    // is not.
+    const auto first = *reinterpret_cast<const std::uint8_t*>(address);
+    return first != 0xCC && first != 0x00;
+}
+
 } // namespace glacier::memory

@@ -41,6 +41,16 @@ std::uintptr_t resolveRelative(std::uintptr_t addressOfDisp, int dispOffset = 0,
 // Follows a relative CALL/JMP at `address` to its destination.
 std::uintptr_t followCall(std::uintptr_t address);
 
+// True if `address` is committed, executable memory — i.e. plausibly code.
+//
+// This exists for signatures resolved by following a call displacement. Those
+// have no self-check: any four bytes decode to *some* address, and if the
+// pattern matched the wrong instruction the result is a confident-looking
+// pointer into data or padding. Hooking that writes a jump over whatever
+// happens to live there, and the failure is a hang or a corrupted game rather
+// than anything that names itself.
+bool isExecutable(std::uintptr_t address);
+
 // Resolves a RIP-relative reference the way reverse-engineering tools express
 // it: at `sig + offset` there's a 4-byte signed displacement, and the absolute
 // target is `sig + offset + 4 + disp`. (Adapted from Flarial's offsetFromSig.)
