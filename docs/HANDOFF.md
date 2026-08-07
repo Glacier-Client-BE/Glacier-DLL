@@ -359,6 +359,29 @@ being broken can be one shared input assumption. Before debugging a UI
 interaction bug here, confirm which window is hooked — the log line `game window
 corrected to 0x…` tells you it happened.
 
+## Diagnosing a crash
+
+`CrashHandler` (installed first thing at attach) logs any access violation as:
+
+```
+[Glacier][error] *** access violation at Minecraft.Windows.exe+0x1A2B3C4 — Glacier was: reading the ClientInstance map
+[Glacier][error]     reading address 0x28 (near-null: a missing null check)
+```
+
+Three things to read off it:
+
+- **`Glacier was:`** — the innermost `GLACIER_ACTIVITY` scope on that thread.
+  Add one to any new path that calls into game code; it costs a thread-local
+  pointer store.
+- **module+offset**, not a bare address — ASLR makes absolute addresses useless
+  between runs, and the offset is what you can look up.
+- **near-null vs wild** — a near-null operand is a missing null check in
+  Glacier's own code. A wild one means a wrong offset or a signature resolving
+  to the wrong function, which is a different investigation entirely.
+
+Some reported exceptions are first-chance and handled normally downstream; the
+last line before the log ends is the informative one. Reporting stops after 5.
+
 ## The world-load crash
 
 **Symptom:** injected fine, then the game crashed after loading a world.
