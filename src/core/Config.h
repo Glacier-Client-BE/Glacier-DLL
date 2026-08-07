@@ -41,6 +41,11 @@ public:
     // WindowsApps tree where writes fail.
     static std::string path();
 
+    // The folder holding the config — and now the log file, which is why this
+    // is public: the logger has to be brought up before Config itself, so it
+    // needs the location without depending on the rest of Config.
+    static std::string directory();
+
     // Applies the stored values onto the live modules. Safe to call when no
     // config exists yet (first run) — that is not an error.
     bool load();
@@ -69,8 +74,6 @@ public:
 
 private:
     Config() = default;
-
-    static std::string directory();
 
     bool m_loaded = false;
     std::atomic<bool> m_dirty{ false };
