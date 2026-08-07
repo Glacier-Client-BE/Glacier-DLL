@@ -2,6 +2,7 @@
 
 #include "HudEditor.h"
 #include "Input.h"
+#include "../core/Config.h"
 #include "../module/ModuleManager.h"
 #include "../util/Logger.h"
 
@@ -72,6 +73,11 @@ void Menu::setOpen(bool open) {
         m_capturingModule = nullptr;
         m_draggingSetting = nullptr;
         m_draggingChannel = -1;
+
+        // Closing the menu is the natural commit point: everything the user
+        // just changed gets persisted, without writing a file on every slider
+        // pixel. The write itself happens on the logic thread.
+        Config::get().markDirty();
     }
     Input::get().reset();
 }
@@ -148,8 +154,13 @@ void Menu::drawSidebar(const Rect& area) {
         y += 36.0f;
     }
 
-    r.drawText("END unloads", Rect{ area.x + kPad, area.bottom() - 32.0f, area.w, 20.0f },
-               kTextDim.withAlpha(0.6f), 11.0f);
+    // Footer: settings save automatically when the menu closes, which is worth
+    // stating — an autosave the user can't see is indistinguishable from a
+    // client that forgets everything.
+    r.drawText("Saves on close", Rect{ area.x + kPad, area.bottom() - 46.0f, area.w, 18.0f },
+               kTextDim.withAlpha(0.55f), 10.5f);
+    r.drawText("END unloads", Rect{ area.x + kPad, area.bottom() - 30.0f, area.w, 18.0f },
+               kTextDim.withAlpha(0.55f), 10.5f);
 }
 
 void Menu::drawModuleList(const Rect& area) {

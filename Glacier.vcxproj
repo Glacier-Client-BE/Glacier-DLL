@@ -76,6 +76,7 @@
   <ItemGroup>
     <ClCompile Include="src\dllmain.cpp" />
     <ClCompile Include="src\Glacier.cpp" />
+    <ClCompile Include="src\core\Config.cpp" />
     <ClCompile Include="src\memory\Memory.cpp" />
     <ClCompile Include="src\memory\SignatureManager.cpp" />
     <ClCompile Include="src\memory\Signatures.cpp" />
@@ -108,6 +109,7 @@
     <ClInclude Include="src\module\ModuleManager.h" />
     <ClInclude Include="src\module\Setting.h" />
     <ClInclude Include="src\core\EventBus.h" />
+    <ClInclude Include="src\core\Config.h" />
     <ClInclude Include="src\ui\Renderer.h" />
     <ClInclude Include="src\ui\Menu.h" />
     <ClInclude Include="src\ui\Input.h" />

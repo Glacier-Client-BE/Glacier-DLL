@@ -35,8 +35,8 @@ Rebuild in progress.
 | 2 | EventBus, HudModule, native Direct2D menu | ✅ compiles |
 | 3a | Signature-free HUDs: FPS, Keystrokes, CPS, Watermark + colour settings and drag-to-move | ✅ compiles |
 | 3b | Signature-backed HUDs: Coordinates, Armor HUD | ✅ compiles |
-| 4 | Config persistence — settings survive a restart | next |
-| 5 | Remaining catalog: Zoom, FOV, Day Counter, Ping, Reach, Hitboxes, view-bobbing, Null Movement | — |
+| 4 | Config persistence — settings survive a restart | ✅ compiles |
+| 5 | Remaining catalog: Zoom, FOV, Day Counter, Ping, Reach, Hitboxes, view-bobbing, Null Movement | next |
 | 6 | Theming, animation, blur, release packaging | — |
 
 **Phases 3a and 3b are split for a reason.** 3a modules touch no game memory at
@@ -53,6 +53,10 @@ correctly on your GPU. Both need someone to inject the DLL on Windows. See
 against a running game — currently nothing.
 
 Controls: **INSERT** opens the menu, **END** unloads the client.
+
+Settings persist to `%APPDATA%\Glacier\config.ini`, written when the menu
+closes and on unload. It is plain sectioned key/value text, so it can be
+hand-edited or checked into a dotfiles repo.
 
 ## Architecture
 

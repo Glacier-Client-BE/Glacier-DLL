@@ -1,6 +1,7 @@
 #include "ModuleManager.h"
 
 #include "ModuleRegistry.h"
+#include "../core/Config.h"
 #include "../util/Logger.h"
 
 #include <algorithm>
@@ -79,6 +80,12 @@ bool ModuleManager::handleKey(int vk) {
             consumed = true;
         }
     }
+
+    // A keybind toggle happens outside the menu, so the menu-close commit point
+    // never fires for it. Without this, toggling by hotkey and quitting loses
+    // the change.
+    if (consumed) Config::get().markDirty();
+
     return consumed;
 }
 

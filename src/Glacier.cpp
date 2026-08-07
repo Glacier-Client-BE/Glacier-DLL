@@ -1,5 +1,6 @@
 #include "Glacier.h"
 
+#include "core/Config.h"
 #include "core/EventBus.h"
 #include "hook/D3DHook.h"
 #include "hook/HookManager.h"
@@ -45,6 +46,11 @@ void Glacier::start(HMODULE self) {
     }
 
     sdk::GameSDK::get().installHooks();
+
+    // Restore saved settings. Deliberately after installHooks(): loading can
+    // re-enable a module, whose onEnable() may depend on a hook being live, and
+    // a module that reports "my hook didn't resolve" should do so accurately.
+    Config::get().load();
 
     // 4. Renderer + present wiring. The overlay owns a private D3D device, so
     //    it is created before the first frame arrives rather than lazily.
@@ -102,6 +108,9 @@ void Glacier::start(HMODULE self) {
         ModuleManager::get().tickAll();
         EventBus::get().publish<TickEvent>();
 
+        // Deferred config writes land here, off the render and window threads.
+        Config::get().flush();
+
         Sleep(10);
         elapsedMs += 10;
 
@@ -121,6 +130,11 @@ void Glacier::start(HMODULE self) {
     // destroy the renderer and the modules those hooks could have called into.
     removeWndProc();
     ui::Menu::get().setOpen(false);
+
+    // Final save before anything is torn down, so state changed since the last
+    // menu close isn't lost on unload.
+    Config::get().save();
+
     setCursorReleased(false);
     D3DHook::get().shutdown();
     HookManager::get().shutdown();
