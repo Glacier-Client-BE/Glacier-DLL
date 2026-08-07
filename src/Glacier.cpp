@@ -12,6 +12,7 @@
 #include "ui/KeyNames.h"
 #include "ui/Menu.h"
 #include "ui/Renderer.h"
+#include "util/CrashHandler.h"
 #include "util/FrameStats.h"
 #include "util/Logger.h"
 
@@ -24,6 +25,10 @@ void Glacier::start(HMODULE self) {
 
     Logger::get().attachConsole();
     LOG_INFO("Glacier attaching (build " __DATE__ " " __TIME__ ")");
+
+    // Before anything touches the game: a crash from here on gets an address
+    // and a description instead of just ending the log.
+    CrashHandler::install();
 
     // 1. Resolve the game SDK from signatures. Refuse to continue if the core
     //    pointers are missing — a clean no-op with a named-signature log beats
@@ -246,6 +251,9 @@ void Glacier::start(HMODULE self) {
     ui::Renderer::get().shutdown();
     ModuleManager::get().shutdown();
     EventBus::get().clear();
+
+    // Last, so a fault during teardown is still attributed.
+    CrashHandler::remove();
 
     LOG_INFO("Glacier detached");
     Logger::get().detachConsole();

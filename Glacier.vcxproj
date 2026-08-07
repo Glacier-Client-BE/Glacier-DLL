@@ -81,6 +81,7 @@
     <ClCompile Include="src\dllmain.cpp" />
     <ClCompile Include="src\Glacier.cpp" />
     <ClCompile Include="src\core\Config.cpp" />
+    <ClCompile Include="src\util\CrashHandler.cpp" />
     <ClCompile Include="src\memory\Memory.cpp" />
     <ClCompile Include="src\memory\SignatureManager.cpp" />
     <ClCompile Include="src\memory\Signatures.cpp" />
@@ -110,6 +111,7 @@
   <ItemGroup>
     <ClInclude Include="src\Glacier.h" />
     <ClInclude Include="src\util\Logger.h" />
+    <ClInclude Include="src\util\CrashHandler.h" />
     <ClInclude Include="src\memory\Memory.h" />
     <ClInclude Include="src\memory\SignatureManager.h" />
     <ClInclude Include="src\memory\GameVersion.h" />

@@ -3,6 +3,7 @@
 #include "../hook/HookManager.h"
 #include "../memory/SignatureManager.h"
 #include "EntityComponents.h"
+#include "../util/CrashHandler.h"
 #include "../util/Logger.h"
 
 #include <cmath>
@@ -81,6 +82,40 @@ CursorFn s_releaseCursor = nullptr;
 // tools and meaningless for everything else.
 using DamageFn = std::int16_t(__fastcall*)(void*);
 DamageFn s_getDamageValue = nullptr;
+
+// ── The ClientInstance map read ──
+//
+// MinecraftGame holds its ClientInstances in a std::map, which we reinterpret
+// through our own std::map because both are MSVC STL. That works, and it is
+// what every client in this space does — but it is a lock-free read of a
+// container the game mutates, and the game mutates it exactly when a world is
+// created or torn down. A find() that walks the tree mid-rebalance reads a
+// half-written node and faults.
+//
+// That is "crashes shortly after loading a world" in one sentence, and no
+// amount of null-checking prevents it: the pointers are non-null, just briefly
+// inconsistent. The read is guarded instead, and a fault reports "no client
+// instance" for that frame — which every caller already handles, because it is
+// the same answer they get on the main menu.
+void* readPrimaryInstanceUnguarded(void* mcGame, std::ptrdiff_t mapOffset) {
+    using InstanceMap = std::map<std::uint8_t, std::shared_ptr<ClientInstance>>;
+    const auto& instances = *reinterpret_cast<const InstanceMap*>(
+        reinterpret_cast<std::uintptr_t>(mcGame) + static_cast<std::uintptr_t>(mapOffset));
+
+    const auto it = instances.find(0);
+    return it != instances.end() ? it->second.get() : nullptr;
+}
+
+// Separate function so the __try has nothing to unwind — MSVC rejects __try in
+// a function that needs C++ object unwinding, and the map read above has
+// plenty.
+void* readPrimaryInstance(void* mcGame, std::ptrdiff_t mapOffset) {
+    __try {
+        return readPrimaryInstanceUnguarded(mcGame, mapOffset);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
 
 // Reads a pointer field, tolerating a null base so a broken chain degrades to
 // nullptr rather than faulting.
@@ -187,25 +222,17 @@ ClientInstance* GameSDK::clientInstance() const {
     void* mcGame = deref(gameCore, sigs.offset("Platform_GameCore::minecraftGame"));
     if (!mcGame) return nullptr;
 
-    // MinecraftGame holds its ClientInstances in a std::map keyed by a small
-    // index; entry 0 is the primary (local) one. Reinterpreting the game's map
-    // through our own std::map works because both are built with the MSVC STL
-    // and share its layout — the same assumption every client in this space
-    // makes. It is also why this is the single most fragile read in the SDK.
-    using InstanceMap = std::map<std::uint8_t, std::shared_ptr<ClientInstance>>;
-    const auto mapAddr = reinterpret_cast<std::uintptr_t>(mcGame)
-                       + static_cast<std::uintptr_t>(sigs.offset("MinecraftGame::clientInstances"));
-
-    const auto& instances = *reinterpret_cast<const InstanceMap*>(mapAddr);
-    const auto it = instances.find(0);
-    if (it == instances.end()) return nullptr;
-
-    return it->second.get();
+    // Entry 0 is the primary (local) instance. Guarded — see the comment on
+    // readPrimaryInstance for why this specific read is the fragile one.
+    GLACIER_ACTIVITY("reading the ClientInstance map");
+    return static_cast<ClientInstance*>(
+        readPrimaryInstance(mcGame, sigs.offset("MinecraftGame::clientInstances")));
 }
 
 LocalPlayer* GameSDK::localPlayer() const {
     void* ci = clientInstance();
     if (!ci || m_localPlayerVIndex < 0) return nullptr;
+    GLACIER_ACTIVITY("calling ClientInstance::getLocalPlayer");
     return memory::callVirtualI<LocalPlayer*>(
         static_cast<std::uint32_t>(m_localPlayerVIndex), ci);
 }
@@ -263,8 +290,12 @@ void GameSDK::applyCursorState(bool menuOpen) {
 
     if (menuOpen) {
         // Re-assert every frame. See the header: one call does not hold.
-        if (cursorGrabbed()) s_releaseCursor(ci);
+        if (cursorGrabbed()) {
+            GLACIER_ACTIVITY("calling ClientInstance::releaseCursor");
+            s_releaseCursor(ci);
+        }
     } else if (m_menuWasOpen) {
+        GLACIER_ACTIVITY("calling ClientInstance::grabCursor");
         s_grabCursor(ci);
     }
     m_menuWasOpen = menuOpen;
@@ -358,6 +389,7 @@ ItemStack GameSDK::readStack(void* stackPtr) const {
     void* item = *reinterpret_cast<void**>(itemHandle);
     const auto maxDamageIndex = sigs.offset("Item::getMaxDamageVIndex");
     if (item && maxDamageIndex > 0) {
+        GLACIER_ACTIVITY("calling Item::getMaxDamage");
         out.maxDurability = memory::callVirtualI<int>(
             static_cast<std::uint32_t>(maxDamageIndex), item);
         // A bad vtable index returns whatever was in the register. Anything
