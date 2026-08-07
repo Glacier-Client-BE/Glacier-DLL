@@ -6,13 +6,15 @@
 
 namespace glacier {
 
-// Held item, and armor slots where the build allows reading them.
+// Armor slots with durability bars, plus the held item.
 //
-// On the current target build armor is NOT readable: it moved behind an ECS
-// component lookup (ActorEquipmentComponent, resolved through the entity
-// registry by type hash) and there is no fixed Actor->armorContainer offset any
-// more. Rather than read a stale offset and draw convincing nonsense, the
-// module says so on screen. See GameSDK::armor().
+// Armor is read through the game's ECS: there is no fixed Actor->armorContainer
+// offset any more, so GameSDK resolves ActorEquipmentComponent out of the entt
+// registry. That makes this module the one most sensitive to the entt pin in
+// third_party — see src/sdk/EntityComponents.h.
+//
+// It fails soft in the ordinary cases (not in a world, component absent):
+// armor() returns invalid stacks and empty slots are drawn.
 class ArmorHud final : public HudModule {
 public:
     ArmorHud()

@@ -49,6 +49,9 @@
       <ConformanceMode>true</ConformanceMode>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <!-- entt is pinned by submodule to the exact commit the game's build
+           uses; see src/sdk/EntityComponents.h for why the version matters. -->
+      <AdditionalIncludeDirectories>$(ProjectDir)third_party\entt\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Condition="'$(Configuration)'=='Release'">
       <Optimization>MaxSpeed</Optimization>
@@ -111,6 +114,7 @@
     <ClInclude Include="src\hook\HookManager.h" />
     <ClInclude Include="src\hook\D3DHook.h" />
     <ClInclude Include="src\sdk\GameSDK.h" />
+    <ClInclude Include="src\sdk\EntityComponents.h" />
     <ClInclude Include="src\module\Module.h" />
     <ClInclude Include="src\module\HudModule.h" />
     <ClInclude Include="src\module\ModuleRegistry.h" />

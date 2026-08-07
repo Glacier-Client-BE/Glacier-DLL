@@ -90,6 +90,9 @@ void SignatureManager::seedBedrock() {
     // vtable *index*, not a byte offset (ClientInstance::getLocalPlayer)
     addOffset("ClientInstance::getLocalPlayerVIndex", 31);
 
+    // Embedded EntityContext — the route into the entt registry for
+    // component data such as armor. See src/sdk/EntityComponents.h.
+    addOffset("Actor::entityContext", 0x08);
     // Position lives in an ECS component; Actor caches a pointer to it.
     addOffset("Actor::stateVector", 0x218);
     // IEntityComponent is an empty base, so pos sits at offset 0

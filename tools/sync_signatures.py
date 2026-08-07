@@ -133,10 +133,14 @@ OFFSETS: list[OffsetEntry] = [
     OffsetEntry("ClientInstance::getLocalPlayerVIndex", "", "", literal=0x1F,
                 comment="vtable *index*, not a byte offset (ClientInstance::getLocalPlayer)"),
 
+    OffsetEntry("Actor::entityContext",
+                "src/mc/common/world/actor/Actor.h", "entityContext",
+                comment="Embedded EntityContext — the route into the entt registry for\n"
+                        "// component data such as armor. See src/sdk/EntityComponents.h.",
+                blank_before=True),
     OffsetEntry("Actor::stateVector",
                 "src/mc/common/world/actor/Actor.h", "stateVector",
-                comment="Position lives in an ECS component; Actor caches a pointer to it.",
-                blank_before=True),
+                comment="Position lives in an ECS component; Actor caches a pointer to it."),
     OffsetEntry("StateVectorComponent::pos", "", "", literal=0x00,
                 comment="IEntityComponent is an empty base, so pos sits at offset 0"),
 

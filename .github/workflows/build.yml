@@ -22,6 +22,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # entt is a submodule pinned to the commit matching the game's build.
+          submodules: true
 
       # ── Toolchain ──────────────────────────────────────────────────────────
       - name: Add MSBuild to PATH

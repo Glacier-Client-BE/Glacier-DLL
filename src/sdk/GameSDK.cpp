@@ -2,6 +2,7 @@
 
 #include "../hook/HookManager.h"
 #include "../memory/SignatureManager.h"
+#include "EntityComponents.h"
 #include "../util/Logger.h"
 
 #include <cmath>
@@ -312,21 +313,40 @@ ItemStack GameSDK::heldItem() const {
 }
 
 std::array<ItemStack, 4> GameSDK::armor() const {
-    // Not supported on this build.
-    //
-    // Armor moved behind an ECS component lookup: Actor::getArmor resolves
-    // ActorEquipmentComponent through the entity registry by type hash, which
-    // needs an entt sparse-set walk Glacier does not implement yet. There is no
-    // fixed Actor->armorContainer offset to read any more.
-    //
-    // Returning empty invalid stacks is deliberate — the Armor HUD renders
-    // empty slots and says so, rather than reading an offset that no longer
-    // means what it used to and drawing convincing nonsense.
-    return {};
+    std::array<ItemStack, 4> out{};
+
+    auto* lp = localPlayer();
+    if (!lp) return out;
+
+    auto& sigs = SignatureManager::get();
+
+    // Armor lives in an ECS component, so it is reached through the game's own
+    // entt registry rather than a fixed Actor offset. See EntityComponents.h
+    // for why this is the most layout-sensitive read in the SDK.
+    const auto ctxOff = sigs.offset("Actor::entityContext");
+    if (ctxOff == 0) return out;
+
+    const auto& ctx = memory::memberAt<EntityContext>(lp, ctxOff);
+    if (!ctx.enttRegistry) return out;
+
+    const auto* equipment = ctx.enttRegistry->try_get<ActorEquipmentComponent>(ctx.entity);
+    if (!equipment || !equipment->armorContainer) return out;
+
+    // Same virtual getItem as the player inventory: the game bounds-checks the
+    // slot for us, which matters more here because a bad index would otherwise
+    // run off the end of a container we never validated.
+    const auto index = static_cast<std::uint32_t>(sigs.offset("Inventory::getItemVIndex"));
+    for (int slot = 0; slot < 4; ++slot) {
+        void* stack = memory::callVirtualI<void*, int>(index, equipment->armorContainer, slot);
+        out[static_cast<std::size_t>(slot)] = readStack(stack);
+    }
+    return out;
 }
 
 bool GameSDK::armorSupported() const {
-    return false;
+    // The component lookup needs the entity context offset; without it there is
+    // no route to the registry at all.
+    return SignatureManager::get().offset("Actor::entityContext") != 0;
 }
 
 } // namespace glacier::sdk
