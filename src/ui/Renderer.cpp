@@ -5,6 +5,8 @@
 #include <d3dcompiler.h>
 #include <algorithm>
 #include <iterator>
+#include <set>
+#include <string_view>
 #include <vector>
 
 #pragma comment(lib, "d2d1.lib")
@@ -83,21 +85,74 @@ D2D1_COLOR_F toD2D(const Color& c) {
     return D2D1::ColorF(c.r, c.g, c.b, c.a);
 }
 
+// Reports a per-frame failure exactly once. These paths run at frame rate, so
+// an unguarded log would emit thousands of lines a second and bury the very
+// message it was meant to surface — which is how they ended up silent instead,
+// leaving "nothing renders and nothing is logged" as the only symptom.
+void warnOnce(const char* message) {
+    static std::set<std::string_view> seen;
+    if (seen.insert(message).second) {
+        LOG_WARN("{}", message);
+    }
+}
+
 } // namespace
 
-bool Renderer::initialize() {
+bool Renderer::initialize(ID3D11Device* gameDevice) {
     if (m_ready) return true;
 
-    // Our own device, with the flags D2D requires. This is the whole reason the
-    // overlay is robust: we never depend on how the game created its device.
+    // Our own device, with the flags D2D requires — we never depend on how the
+    // game created its device.
+    //
+    // But it MUST live on the same adapter as the game. A keyed-mutex shared
+    // texture cannot cross adapters: on a laptop with an integrated and a
+    // discrete GPU, passing nullptr here picks the default adapter while the
+    // game renders on the other one, and OpenSharedResource then fails — the
+    // overlay silently never draws. So we ask the game's device which adapter
+    // it is on and create ours there.
+    IDXGIAdapter* adapter = nullptr;
+    if (gameDevice) {
+        IDXGIDevice* gameDxgi = nullptr;
+        if (SUCCEEDED(gameDevice->QueryInterface(__uuidof(IDXGIDevice),
+                                                 reinterpret_cast<void**>(&gameDxgi)))
+            && gameDxgi) {
+            gameDxgi->GetAdapter(&adapter);
+            gameDxgi->Release();
+        }
+        if (!adapter) {
+            LOG_WARN("could not determine the game's adapter — falling back to the "
+                     "default one; the overlay will not composite if they differ");
+        }
+    }
+
     UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_SINGLETHREADED;
     constexpr D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0 };
 
-    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
-                                   levels, static_cast<UINT>(std::size(levels)),
-                                   D3D11_SDK_VERSION, &m_device, nullptr, &m_context);
+    // With an explicit adapter the driver type MUST be UNKNOWN; passing
+    // HARDWARE alongside an adapter is an invalid-arg error, not a fallback.
+    HRESULT hr = D3D11CreateDevice(
+        adapter,
+        adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE,
+        nullptr, flags, levels, static_cast<UINT>(std::size(levels)),
+        D3D11_SDK_VERSION, &m_device, nullptr, &m_context);
+
+    if (SUCCEEDED(hr) && adapter) {
+        DXGI_ADAPTER_DESC desc{};
+        if (SUCCEEDED(adapter->GetDesc(&desc))) {
+            char name[256]{};
+            WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, name, sizeof(name),
+                                nullptr, nullptr);
+            LOG_INFO("overlay device on the game's adapter: {}", name);
+        }
+    }
+    safeRelease(adapter);
+
     if (FAILED(hr)) {
-        LOG_WARN("overlay hardware device failed ({:#x}); trying WARP", static_cast<unsigned>(hr));
+        // WARP is a last resort and only helps when the game is *also* on WARP;
+        // across adapters the shared texture still won't open. Better than
+        // nothing, and the failure is reported clearly either way.
+        LOG_WARN("overlay device on the game's adapter failed ({:#x}); trying WARP",
+                 static_cast<unsigned>(hr));
         hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags,
                                levels, static_cast<UINT>(std::size(levels)),
                                D3D11_SDK_VERSION, &m_device, nullptr, &m_context);
@@ -335,13 +390,29 @@ void Renderer::resize(UINT width, UINT height) {
 
 bool Renderer::beginFrame(IDXGISwapChain* swapChain, ID3D11Device* device,
                           ID3D11DeviceContext* context) {
-    if (!m_ready || !swapChain || !device || !context) return false;
+    if (!swapChain || !device || !context) return false;
+
+    // Deferred creation: we only learn which adapter the game is on once it
+    // hands us its device here, and our device has to match it.
+    if (!m_ready && !m_deviceFailed) {
+        if (!initialize(device)) {
+            m_deviceFailed = true;   // don't retry every frame forever
+            return false;
+        }
+    }
+    if (!m_ready) return false;
 
     // Track the back-buffer size from the swap chain itself rather than trusting
     // a cached WM_SIZE: borderless-fullscreen transitions change it without one.
     DXGI_SWAP_CHAIN_DESC scd{};
-    if (FAILED(swapChain->GetDesc(&scd))) return false;
-    if (scd.BufferDesc.Width == 0 || scd.BufferDesc.Height == 0) return false;
+    if (FAILED(swapChain->GetDesc(&scd))) {
+        warnOnce("swapchain GetDesc failed — cannot size the overlay");
+        return false;
+    }
+    if (scd.BufferDesc.Width == 0 || scd.BufferDesc.Height == 0) {
+        warnOnce("swapchain reports a zero-sized back buffer");
+        return false;
+    }
 
     if (scd.BufferDesc.Width != m_pxWidth || scd.BufferDesc.Height != m_pxHeight) {
         if (!createSharedSurface(scd.BufferDesc.Width, scd.BufferDesc.Height)) {
@@ -356,7 +427,14 @@ bool Renderer::beginFrame(IDXGISwapChain* swapChain, ID3D11Device* device,
         }
     }
 
-    if (FAILED(m_writeMutex->AcquireSync(kKeyWrite, 1000))) return false;
+    // A failure here almost always means a previous frame released the mutex
+    // with a key nobody acquires, so state it plainly rather than silently
+    // drawing nothing forever.
+    const HRESULT acquired = m_writeMutex->AcquireSync(kKeyWrite, 1000);
+    if (FAILED(acquired)) {
+        warnOnce("overlay keyed mutex acquire failed — the overlay will not draw");
+        return false;
+    }
 
     m_d2d->SetTarget(m_target);
     m_d2d->BeginDraw();
@@ -392,8 +470,29 @@ void Renderer::endFrame() {
 }
 
 void Renderer::composite(ID3D11DeviceContext* context) {
-    if (!context || !m_srv || !m_readMutex) return;
-    if (FAILED(m_readMutex->AcquireSync(kKeyRead, 1000))) return;
+    // endFrame has already released the mutex to kKeyRead by the time we get
+    // here. If we bail now without acquiring and releasing it back to
+    // kKeyWrite, the next beginFrame waits on a key nobody will ever hand
+    // over — the overlay deadlocks itself into drawing nothing, permanently.
+    // So every exit from this function must leave the key back at kKeyWrite.
+    if (!context || !m_srv || !m_readMutex) {
+        warnOnce("overlay composite skipped — no shared view; recovering the mutex");
+        if (m_readMutex) {
+            if (SUCCEEDED(m_readMutex->AcquireSync(kKeyRead, 100))) {
+                m_readMutex->ReleaseSync(kKeyWrite);
+            }
+        } else if (m_writeMutex) {
+            // Hand it back on our own side so the next frame can proceed.
+            if (SUCCEEDED(m_writeMutex->AcquireSync(kKeyRead, 100))) {
+                m_writeMutex->ReleaseSync(kKeyWrite);
+            }
+        }
+        return;
+    }
+    if (FAILED(m_readMutex->AcquireSync(kKeyRead, 1000))) {
+        warnOnce("overlay composite could not acquire the shared texture");
+        return;
+    }
 
     // Save the game's pipeline state. Restoring it is not optional: leaving our
     // shaders, blend state, or viewport bound corrupts the game's own rendering

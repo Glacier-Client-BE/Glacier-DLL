@@ -68,8 +68,10 @@ public:
         return instance;
     }
 
-    // Creates the private device and D2D/DWrite stack. Idempotent.
-    bool initialize();
+    // Creates the private device and D2D/DWrite stack on the same adapter as
+    // `gameDevice`. Called lazily from beginFrame, because the game's adapter
+    // is not knowable until it hands us its device. Idempotent.
+    bool initialize(ID3D11Device* gameDevice);
     void shutdown();
 
     // Called when the game's back buffer changes size. Drops and recreates the
@@ -159,6 +161,9 @@ private:
     UINT  m_pxWidth  = 0;
     UINT  m_pxHeight = 0;
     bool  m_ready   = false;
+    // Latches after a failed device creation so we don't retry — and re-log —
+    // on every single frame.
+    bool  m_deviceFailed = false;
     bool  m_drawing = false;
     int   m_clipDepth = 0;
     ID3D11DeviceContext* m_frameContext = nullptr;

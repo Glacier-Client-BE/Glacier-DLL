@@ -55,10 +55,10 @@ void Glacier::start(HMODULE self) {
 
     // 4. Renderer + present wiring. The overlay owns a private D3D device, so
     //    it is created before the first frame arrives rather than lazily.
-    auto& renderer = ui::Renderer::get();
-    if (!renderer.initialize()) {
-        LOG_WARN("overlay renderer unavailable — client runs headless (keybinds only)");
-    }
+    // The renderer is NOT initialized here. Its device has to be created on the
+    // same GPU adapter the game renders on, and that is only knowable once the
+    // game hands us its device in the Present hook — so beginFrame creates it
+    // on the first frame instead.
 
     auto& d3d = D3DHook::get();
     d3d.onPresent([](IDXGISwapChain* sc, ID3D11Device* dev, ID3D11DeviceContext* ctx) {
@@ -112,14 +112,13 @@ void Glacier::start(HMODULE self) {
             break;
         }
 
-        // Poll menu keys here as a fallback for games (e.g. Bedrock) that route
-        // keyboard input through WM_INPUT / RawInput, which means WM_KEYDOWN
-        // never reaches our WndProc. GetAsyncKeyState bypasses the message queue
-        // entirely, so it works regardless of how the game reads its input.
+        // The ONLY place the menu is toggled. Polling rather than WM_KEYDOWN
+        // because Bedrock routes keyboard input through RawInput, so WM_KEYDOWN
+        // is not reliably delivered to our WndProc — and GetAsyncKeyState
+        // bypasses the message queue entirely.
         //
-        // m_menuKeyWasDown is also written by the WndProc when it handles the
-        // key via WM_KEYDOWN, so both paths share the same edge-detection state
-        // and can't both toggle the menu for the same physical key press.
+        // Do not add a second toggle in the WndProc: the two fire at different
+        // times for one physical press and cancel each other out.
         {
             const bool menuDown = (GetAsyncKeyState(m_menuKey)    & 0x8000) ||
                                   (GetAsyncKeyState(m_menuKeyAlt) & 0x8000);
@@ -230,15 +229,19 @@ LRESULT CALLBACK Glacier::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     if (freshKey) {
         const int vk = static_cast<int>(wParam);
 
-        // Menu key first, and never while a keybind widget is capturing —
-        // otherwise the menu key can't be bound to anything.
+        // The menu key is toggled ONLY by the polling loop on the logic thread.
         //
-        // Mark the key as "was down" so the GetAsyncKeyState polling loop on the
-        // logic thread doesn't also toggle the menu for the same key press.
+        // It used to be toggled here as well, with a shared "was down" flag
+        // meant to stop the two paths colliding. That flag cannot work:
+        // GetAsyncKeyState reports the physical key the instant it goes down,
+        // while WM_KEYDOWN arrives later via the message queue. The poll fires
+        // first (opening the menu and setting the flag), then this handler runs
+        // and toggles again (closing it). One press, two toggles — the menu
+        // appears to never open, and the close writes the config, which is
+        // exactly the "config saved spam with no menu" symptom.
+        //
+        // We still swallow the key so G/M never leak through to the game.
         if (self.isMenuKey(vk) && !menu.capturingKey()) {
-            self.m_menuKeyWasDown.store(true, std::memory_order_relaxed);
-            menu.toggle();
-            setCursorReleased(menu.open());
             return 0;
         }
 

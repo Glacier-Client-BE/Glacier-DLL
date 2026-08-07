@@ -26,7 +26,13 @@ public:
 
     bool open() const { return m_open; }
     void setOpen(bool open);
-    void toggle() { setOpen(!m_open); }
+    void toggle() {
+        static ULONGLONG lastToggle = 0;
+        ULONGLONG now = GetTickCount64();
+        if (now - lastToggle < 50) return;
+        lastToggle = now;
+        setOpen(!m_open);
+    }
 
     // True while a keybind widget is waiting for a key. The WndProc hook checks
     // this so the captured key toggles nothing on its way through.
