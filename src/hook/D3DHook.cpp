@@ -204,10 +204,28 @@ HRESULT STDMETHODCALLTYPE D3DHook::hkPresent(IDXGISwapChain* sc, UINT sync, UINT
 HRESULT STDMETHODCALLTYPE D3DHook::hkResizeBuffers(IDXGISwapChain* sc, UINT count, UINT w, UINT h,
                                                    DXGI_FORMAT fmt, UINT flags) {
     auto& self = D3DHook::get();
+
+    // Before the original, always: the callback's job is to drop every
+    // reference we hold to the back buffer, and ResizeBuffers fails outright if
+    // one is still outstanding. Note w/h of 0 is legal and means "keep the
+    // current size" — the callback must handle that, not skip it.
+    LOG_TRACE("ResizeBuffers({} buffers, {}x{}) — releasing our back-buffer references",
+              count, w, h);
     if (self.m_resize) {
         self.m_resize(sc, w, h);
     }
-    return s_originalResize(sc, count, w, h, fmt, flags);
+
+    const HRESULT hr = s_originalResize(sc, count, w, h, fmt, flags);
+    if (FAILED(hr)) {
+        // If this ever fires, the game is now running on a swap chain it thinks
+        // it resized and did not. It will crash shortly afterwards, somewhere
+        // that looks nothing like the cause — so name it here.
+        LOG_ERROR("the game's ResizeBuffers FAILED ({:#x}). If this is "
+                  "DXGI_ERROR_INVALID_CALL (0x887A0001), Glacier is still holding a "
+                  "back-buffer reference and that is our bug.",
+                  static_cast<unsigned>(hr));
+    }
+    return hr;
 }
 
 } // namespace glacier

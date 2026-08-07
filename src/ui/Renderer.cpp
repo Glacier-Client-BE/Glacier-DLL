@@ -395,8 +395,26 @@ bool Renderer::createGameResources(ID3D11Device* device) {
 }
 
 void Renderer::resize(UINT width, UINT height) {
+    // FIRST, AND UNCONDITIONALLY. This runs just before the game's own
+    // ResizeBuffers, and ResizeBuffers fails with DXGI_ERROR_INVALID_CALL if
+    // ANY outstanding reference to a back buffer exists — ours included.
+    //
+    // The two early-outs below used to come first, which meant the reference
+    // survived in exactly the cases that matter most:
+    //
+    //   * width/height of 0. That is not a degenerate call to ignore, it is
+    //     DXGI's "keep the current size", and it is the most common form.
+    //   * an unchanged size, which games still call for buffer-count and
+    //     fullscreen-state changes.
+    //
+    // A failed ResizeBuffers does not fail loudly. The game carries on with a
+    // swap chain it believes it resized, and dies a moment later somewhere
+    // inside DXGI with a wild pointer — nowhere near the actual mistake.
+    safeRelease(m_backBufferRtv);
+
     if (!m_ready || width == 0 || height == 0) return;
     if (width == m_pxWidth && height == m_pxHeight) return;
+
     createSharedSurface(width, height);
     // Game-side views referenced the old texture; they are rebuilt lazily on the
     // next beginFrame, which is also where we know the game device again.
