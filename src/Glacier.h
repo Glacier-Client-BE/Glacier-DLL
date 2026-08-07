@@ -61,7 +61,11 @@ private:
     int               m_menuKey     = 'G';
     int               m_menuKeyAlt  = 'M';
     int               m_unloadKey   = VK_END;
-    std::atomic<bool> m_shuttingDown = false;
+    std::atomic<bool> m_shuttingDown   = false;
+    // Shared edge-detection flag for the menu toggle key. Written by both the
+    // WndProc hook (window thread) and the GetAsyncKeyState polling loop (logic
+    // thread) so the two paths can't both fire for the same physical key press.
+    std::atomic<bool> m_menuKeyWasDown = false;
 };
 
 } // namespace glacier

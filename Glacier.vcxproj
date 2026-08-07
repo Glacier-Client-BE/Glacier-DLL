@@ -51,7 +51,7 @@
       <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <!-- entt is pinned by submodule to the exact commit the game's build
            uses; see src/sdk/EntityComponents.h for why the version matters. -->
-      <AdditionalIncludeDirectories>$(ProjectDir)third_party\entt\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)third_party\entt\src;$(ProjectDir)vcpkg_installed\x64-windows-static\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Condition="'$(Configuration)'=='Release'">
       <Optimization>MaxSpeed</Optimization>
@@ -67,7 +67,8 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>d3d11.lib;dxgi.lib;d2d1.lib;dwrite.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d11.lib;dxgi.lib;d2d1.lib;dwrite.lib;minhook.x64.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)vcpkg_installed\x64-windows-static\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <Link Condition="'$(Configuration)'=='Release'">
       <EnableCOMDATFolding>true</EnableCOMDATFolding>

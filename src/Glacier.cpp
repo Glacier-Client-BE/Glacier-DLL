@@ -105,7 +105,6 @@ void Glacier::start(HMODULE self) {
     // 6. Logic loop: module ticks + unload watch.
     bool warnedNoFrames  = false;
     int  elapsedMs       = 0;
-    bool menuKeyWasDown  = false; // edge-detection: ignore repeat while held
 
     while (!m_shuttingDown.load()) {
         if (GetAsyncKeyState(m_unloadKey) & 0x8000) {
@@ -117,15 +116,19 @@ void Glacier::start(HMODULE self) {
         // keyboard input through WM_INPUT / RawInput, which means WM_KEYDOWN
         // never reaches our WndProc. GetAsyncKeyState bypasses the message queue
         // entirely, so it works regardless of how the game reads its input.
-        // Edge-detection (was-down flag) prevents toggling repeatedly while held.
+        //
+        // m_menuKeyWasDown is also written by the WndProc when it handles the
+        // key via WM_KEYDOWN, so both paths share the same edge-detection state
+        // and can't both toggle the menu for the same physical key press.
         {
             const bool menuDown = (GetAsyncKeyState(m_menuKey)    & 0x8000) ||
                                   (GetAsyncKeyState(m_menuKeyAlt) & 0x8000);
-            if (menuDown && !menuKeyWasDown && !ui::Menu::get().capturingKey()) {
+            if (menuDown && !m_menuKeyWasDown.load(std::memory_order_relaxed)
+                         && !ui::Menu::get().capturingKey()) {
                 ui::Menu::get().toggle();
                 setCursorReleased(ui::Menu::get().open());
             }
-            menuKeyWasDown = menuDown;
+            m_menuKeyWasDown.store(menuDown, std::memory_order_relaxed);
         }
 
         ModuleManager::get().tickAll();
@@ -229,7 +232,11 @@ LRESULT CALLBACK Glacier::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
         // Menu key first, and never while a keybind widget is capturing —
         // otherwise the menu key can't be bound to anything.
+        //
+        // Mark the key as "was down" so the GetAsyncKeyState polling loop on the
+        // logic thread doesn't also toggle the menu for the same key press.
         if (self.isMenuKey(vk) && !menu.capturingKey()) {
+            self.m_menuKeyWasDown.store(true, std::memory_order_relaxed);
             menu.toggle();
             setCursorReleased(menu.open());
             return 0;
