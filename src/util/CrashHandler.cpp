@@ -5,10 +5,8 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <Windows.h>
-#include <psapi.h>
-
-#pragma comment(lib, "psapi.lib")
 
 namespace glacier {
 
@@ -29,15 +27,41 @@ void describeAddress(std::uintptr_t address, char* out, std::size_t outSize) {
     if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
                            | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                            reinterpret_cast<LPCSTR>(address), &module) && module) {
+        // GetModuleFileNameA, not psapi's GetModuleBaseNameA: it needs only the
+        // HMODULE we already hold. The psapi call was silently failing here and
+        // sending every faulting address — including ordinary system DLLs — down
+        // the "(no module)" path, which made a perfectly attributable crash look
+        // like it came from nowhere.
         char path[MAX_PATH]{};
-        if (GetModuleBaseNameA(GetCurrentProcess(), module, path, sizeof(path)) > 0) {
+        if (GetModuleFileNameA(module, path, sizeof(path)) > 0) {
+            const char* name = std::strrchr(path, '\\');
+            name = name ? name + 1 : path;
             const auto base = reinterpret_cast<std::uintptr_t>(module);
             _snprintf_s(out, outSize, _TRUNCATE, "%s+0x%llX",
-                        path, static_cast<unsigned long long>(address - base));
+                        name, static_cast<unsigned long long>(address - base));
             return;
         }
     }
-    _snprintf_s(out, outSize, _TRUNCATE, "0x%llX (no module)",
+
+    // Genuinely outside every module. Say what kind of memory it is instead:
+    // MEM_PRIVATE executable memory is a hook trampoline or JIT, which is a
+    // completely different investigation from a stray address.
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &mbi, sizeof(mbi)) == sizeof(mbi)) {
+        const char* kind = mbi.Type == MEM_IMAGE   ? "image"
+                         : mbi.Type == MEM_MAPPED  ? "mapped"
+                         : mbi.Type == MEM_PRIVATE ? "private (trampoline or JIT)"
+                                                   : "unknown";
+        _snprintf_s(out, outSize, _TRUNCATE,
+                    "0x%llX (no module; %s, alloc base 0x%llX, protect 0x%lX)",
+                    static_cast<unsigned long long>(address), kind,
+                    static_cast<unsigned long long>(
+                        reinterpret_cast<std::uintptr_t>(mbi.AllocationBase)),
+                    static_cast<unsigned long>(mbi.Protect));
+        return;
+    }
+
+    _snprintf_s(out, outSize, _TRUNCATE, "0x%llX (unmapped)",
                 static_cast<unsigned long long>(address));
 }
 

@@ -3,6 +3,7 @@
 #include "GameSDK.h"
 #include "../core/Config.h"
 #include "../hook/HookManager.h"
+#include "../util/CrashHandler.h"
 #include "../memory/Memory.h"
 #include "../memory/SignatureManager.h"
 #include "../util/Logger.h"
@@ -41,9 +42,17 @@ using SetupAndRenderFn = void(__fastcall*)(void* screenView, void* uiRenderConte
 SetupAndRenderFn o_setupAndRender = nullptr;
 
 void __fastcall hkSetupAndRender(void* screenView, void* uiRenderContext) {
+    LOG_ONCE("ScreenView hook fired first time (ctx {:#x})",
+             reinterpret_cast<std::uintptr_t>(uiRenderContext));
+
     // Call through first so our icons land on top of the game's own UI rather
     // than under the hotbar it is about to draw.
-    o_setupAndRender(screenView, uiRenderContext);
+    {
+        GLACIER_ACTIVITY("inside the original ScreenView::setupAndRender");
+        o_setupAndRender(screenView, uiRenderContext);
+    }
+    LOG_ONCE("original ScreenView::setupAndRender returned");
+
     ItemRendering::get().drawPending(uiRenderContext);
 }
 
@@ -180,10 +189,18 @@ void ItemRendering::drawPending(void* uiRenderContext) {
     auto& sigs = SignatureManager::get();
     auto& sdk  = GameSDK::get();
 
+    // Everything from here to the draw reads through imported offsets against a
+    // pointer the game handed us. None of it was previously marked, so a fault
+    // anywhere in it reported the useless "Glacier was: (idle)".
+    GLACIER_ACTIVITY("reading MinecraftUIRenderContext for item drawing");
+
     void* clientInstance = memory::memberAt<void*>(
         uiRenderContext, sigs.offset("MinecraftUIRenderContext::clientInstance"));
     void* screenContext = memory::memberAt<void*>(
         uiRenderContext, sigs.offset("MinecraftUIRenderContext::screenContext"));
+    LOG_ONCE("item draw context: cinst {:#x}, screenContext {:#x}",
+             reinterpret_cast<std::uintptr_t>(clientInstance),
+             reinterpret_cast<std::uintptr_t>(screenContext));
     if (!clientInstance || !screenContext) return;
 
     void* minecraftGame = *reinterpret_cast<void**>(
@@ -210,6 +227,7 @@ void ItemRendering::drawPending(void* uiRenderContext) {
 
     std::memset(context, 0, contextSize);
 
+    LOG_ONCE("constructing BaseActorRenderContext ({} bytes)", contextSize);
     if (!constructContextGuarded(context, screenContext, clientInstance, minecraftGame)) {
         disableAfterFault("BaseActorRenderContext::BaseActorRenderContext");
         return;
@@ -217,11 +235,18 @@ void ItemRendering::drawPending(void* uiRenderContext) {
 
     void* itemRenderer = memory::memberAt<void*>(
         context, sigs.offset("BaseActorRenderContext::itemRenderer"));
+    LOG_ONCE("BaseActorRenderContext built, itemRenderer {:#x}",
+             reinterpret_cast<std::uintptr_t>(itemRenderer));
     if (!itemRenderer) return;
 
-    if (!drawBatchGuarded(itemRenderer, context, batch.data(), batch.size(), frac)) {
-        disableAfterFault("ItemRenderer::renderGuiItemNew");
+    {
+        GLACIER_ACTIVITY("drawing item icons via ItemRenderer::renderGuiItemNew");
+        if (!drawBatchGuarded(itemRenderer, context, batch.data(), batch.size(), frac)) {
+            disableAfterFault("ItemRenderer::renderGuiItemNew");
+            return;
+        }
     }
+    LOG_ONCE("first item icon batch drawn ({} icons)", batch.size());
 }
 
 void ItemRendering::disableAfterFault(const char* what) {
