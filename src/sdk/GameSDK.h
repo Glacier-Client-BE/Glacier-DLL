@@ -15,11 +15,11 @@
 // hardcoded number. That separation is what keeps all third-party-derived data
 // confined to src/memory/Signatures.cpp (see docs/acknowledgements.md).
 //
-// Phase 1 scope is deliberately narrow: capture ClientInstance, reach
-// LocalPlayer, and drive the gamma override that Fullbright needs. Inventory,
-// armor, attack/ping/time instrumentation, and world→screen projection arrive
-// in Phase 3 alongside the modules that consume them — each pulls in more
-// offsets, and an offset with no consumer is an unverifiable liability.
+// ClientInstance is reached by walking globals rather than by hooking an update
+// function: the chain needs no hook and works before the first tick. Entity
+// position lives in an ECS component, and inventory slots are read through a
+// virtual getItem rather than by walking the backing vector by hand — both are
+// what the current build actually requires.
 namespace glacier::sdk {
 
 struct Vec3 {
@@ -56,21 +56,21 @@ public:
         return instance;
     }
 
-    // Seeds + scans signatures and decodes the getLocalPlayer vtable index.
-    // Returns false if a required signature is missing, in which case the
-    // caller must abort the attach: continuing without these pointers means
-    // dereferencing garbage, and a clean refusal is a far better failure mode.
+    // Seeds + scans signatures and decodes the root global. Returns false if a
+    // required signature is missing, in which case the caller must abort the
+    // attach: continuing without these pointers means dereferencing garbage,
+    // and a clean refusal is a far better failure mode.
     bool resolve();
     bool resolved() const { return m_resolved; }
 
-    // Installs the SDK's own hooks (ClientInstance capture + gamma override).
-    // Must run after HookManager::initialize().
+    // Installs the SDK's optional instrumentation hooks (gamma override, attack
+    // observation, ping and world-time caches). Must run after
+    // HookManager::initialize().
     void installHooks();
 
-    // Set by the ClientInstance::update detour every tick.
-    void setClientInstance(void* instance) {
-        m_clientInstance.store(instance, std::memory_order_relaxed);
-    }
+    // Walks the global object graph to the primary ClientInstance. Returns
+    // nullptr whenever any link is missing (main menu, loading, disconnect),
+    // which callers must treat as normal rather than exceptional.
     ClientInstance* clientInstance() const;
     LocalPlayer*    localPlayer() const;
 
@@ -100,26 +100,30 @@ public:
     // Distance in blocks of the most recent melee hit, or nullopt if none has
     // been observed. `ageMs` reports how long ago, so a HUD can fade it out.
     std::optional<float> lastAttackDistance(std::uint64_t* ageMs = nullptr) const;
-    void recordAttack(void* gameMode, void* target);   // called by the hook
+    void recordAttack(void* attacker, void* target);   // called by the hook
 
     // ── Containers ──
     // All return empty/invalid data rather than throwing when the player isn't
     // in a world or the offsets didn't resolve, so HUD widgets can call them
     // unconditionally every frame.
+    // Armor is not readable on this build — see the note in armor(). Query
+    // armorSupported() to render an honest "unavailable" rather than blanks.
     std::array<ItemStack, 4> armor() const;
+    bool                     armorSupported() const;
     ItemStack                heldItem() const;
 
 private:
     GameSDK() = default;
 
-    ItemStack readSlot(std::uintptr_t containerBase, int index) const;
+    ItemStack readStack(void* stackPtr) const;
 
     bool m_resolved = false;
 
-    // Captured live by the update hook, read from the logic + render threads.
-    std::atomic<void*> m_clientInstance{ nullptr };
+    // Address of the global that roots the whole object graph, decoded once in
+    // resolve() from the Platform_GameCore signature.
+    std::uintptr_t m_gameCoreGlobal = 0;
 
-    // Decoded once in resolve() from the getLocalPlayerIndex call site.
+    // Vtable index of ClientInstance::getLocalPlayer for the target build.
     int m_localPlayerVIndex = -1;
 
     // Instrumentation caches. Written from game threads, read from the render

@@ -2,23 +2,21 @@
 //  THIRD-PARTY-DERIVED DATA — READ docs/acknowledgements.md BEFORE EDITING
 //
 //  The AOB byte patterns and struct offsets in this file are derived from the
-//  open reverse-engineering work published in two other Bedrock clients:
+//  open reverse-engineering work published in other Bedrock clients:
 //
-//      Flarial (dll-oss)  https://github.com/flarialmc/dll-oss   — AGPLv3
-//      Latite             https://github.com/LatiteClient/Latite — GPLv3
+//      Latite   https://github.com/LatiteClient/Latite   — GPLv3
+//      Flarial  https://github.com/flarialmc/dll-oss     — AGPLv3
 //
 //  They were NOT independently derived. This single file is the reason Glacier
 //  is licensed AGPLv3 rather than permissively; AGPLv3 absorbs both upstreams
 //  cleanly (GPLv3 material may be incorporated under GPLv3 §13).
 //
-//  Two rules follow from that, and they are the whole point of this file
-//  existing separately from SignatureManager.cpp:
+//  Two rules follow, and they are the whole point of this file existing
+//  separately from SignatureManager.cpp:
 //
 //    1. Keep imported data HERE. Never inline a pattern or a struct offset
 //       anywhere else in the tree — everything build-specific is looked up
-//       through SignatureManager by name. If this file is ever replaced with
-//       independently derived data, that must be the only change required to
-//       clear the license constraint.
+//       through SignatureManager by name.
 //
 //    2. Everything else in Glacier (the scanner, the registry, the hooks, the
 //       module system, the UI) is Glacier's own code and carries no such
@@ -26,20 +24,18 @@
 //
 //  ── TARGET BUILD: Minecraft: Bedrock Edition 1.26.40 ──
 //
-//  Declared in SignatureManager::kTarget{Major,Minor,Patch}; the attached
-//  game's real version is read from its executable at startup and compared,
-//  so a mismatch is logged rather than discovered through weird behaviour.
+//  This table was rewritten from Latite's current (1.26.4x-era) data. The
+//  previous table carried patterns last redefined for 1.21.13x, which had
+//  drifted badly — Options::getGamma had a different prologue AND a different
+//  option index, Player::supplies had moved 0x400 bytes, entity position had
+//  migrated into an ECS component, and the ItemStack count/aux offsets were
+//  transposed. Those are exactly the failures the version warning exists to
+//  explain.
 //
-//  Honest provenance: these patterns were last *redefined upstream* for
-//  1.21.13x and carried forward because nothing overrode them before 1.26;
-//  the offsets reflect the 1.26 overrides. They are believed correct for
-//  1.26.40 but have not been verified against a 1.26.40 binary by this
-//  project. If Glacier logs unresolved signatures on 1.26.40, that belief was
-//  wrong and the fix is here — see docs/reverse-engineering.md.
-//
-//  Multi-build support, when it is needed, goes through
-//  SignatureManager::checkAboveOrEqual: seed the older value unconditionally,
-//  then override it behind a version gate.
+//  Still unverified by this project against a running 1.26.40 client: these
+//  values are taken from an actively-maintained project that supports the
+//  build, which is much stronger evidence than before, but it is not the same
+//  as having watched them work. See docs/signatures.md.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include "SignatureManager.h"
@@ -50,88 +46,83 @@ void SignatureManager::seedBedrock() {
     if (m_seeded) return;
     m_seeded = true;
 
-    // Phase 1 scope: only what the hook core, the SDK's ClientInstance capture,
-    // and Fullbright actually need. The remaining entries (attack/ping/time
-    // instrumentation, inventory + armor containers, the world→screen matrix
-    // chain) are imported alongside the modules that consume them, so an
-    // unresolved-signature warning always corresponds to a feature that exists.
+    // ── Signatures ──
 
-    // ── Signatures (IDA-style byte patterns) ──
+    // The root of the object graph. This is a `mov [rip+disp], r15` store into
+    // a global; the RIP-relative operand at +3 gives the global's address, and
+    // the value there is the WinMain-ish object holding Platform_GameCore.
+    // Resolved in GameSDK via offsetFromSig(sig, 3).
+    addSignature("Platform_GameCore", "4C 89 3D ? ? ? ? 4D 85 FF");
 
-    // ClientInstance::update — hooked to capture the live ClientInstance
-    // pointer each tick. Preferred over chasing a global, which moves between
-    // builds. Attach-blocking: without it the SDK can never reach the player.
-    addSignature("ClientInstance::update",
-        "48 89 5c 24 ? 48 89 74 24 ? 55 57 41 56 48 8d 6c 24 ? 48 81 ec ? ? ? ? 48 8b f1 e8 ? ? ? ? 48 8b d8");
-
-    // ClientInstance::getLocalPlayerIndex — not a function to call, but a
-    // virtual *call site*. The 4-byte displacement at sig+9 is getLocalPlayer's
-    // byte offset into the vtable; /8 gives the index (decoded in GameSDK).
-    // Attach-blocking for the same reason as above.
-    addSignature("ClientInstance::getLocalPlayerIndex",
-        "49 8B 00 49 8B C8 48 8B 80 ? ? ? ? FF 15 ? ? ? ? 48 85 C0 0F 84 ? ? ? ? 48 8B C8");
-
-    // Options::getGamma — hooked by Fullbright, which returns an override value
-    // instead of the player's real brightness while enabled. Not attach-
-    // blocking: if this is missing, Fullbright no-ops and everything else runs.
+    // Options::getGamma — hooked by Fullbright to return an override value.
+    // Note the trailing `41 B8 35 00 00 00`: that immediate is the option index
+    // and it moves between builds, which is what makes this pattern so
+    // version-sensitive. If Fullbright breaks first after an update, look here.
     addSignature("Options::getGamma",
-        "48 83 EC 28 48 8B 01 48 8D 54 24 30 41 B8 36 00 00 00");
+        "48 83 EC 38 48 8B 05 ? ? ? ? 48 31 E0 48 89 44 24 ? 48 8B 01 48 8B 40 08 48 8D 54 24 ? 41 B8 35 00 00 00");
 
-    // ItemStack::getMaxDamage(ItemStack*) -> int. Called (not hooked) to fill in
-    // durability bars. Optional: without it, bars simply don't render.
-    addSignature("ItemStack::getMaxDamage",
-        "48 83 EC ? 48 8B 51 ? 33 C0 48 85 D2 74 ? 48 39 02 0F 95 C1");
-
-    // ── Instrumentation hooks (Phase 5 HUDs) ──
-    // All optional. Each drives exactly one HUD, which shows "--" when the
-    // signature is missing rather than a wrong number.
-
-    // GameMode::attack(GameMode*, Actor* target, bool) — hooked to observe melee
-    // hits for the Reach display. Read-only: the detour records and calls
-    // through, it never alters the attack. Shape is >= 1.21.50.
-    addSignature("GameMode::attack",
-        "48 89 ? ? ? 48 89 ? ? ? 48 89 ? ? ? 55 41 ? 41 ? 41 ? 41 ? 48 8D ? ? ? ? ? ? 48 81 EC ? ? ? ? 48 8B ? ? ? ? ? 48 33 ? 48 89 ? ? ? ? ? 45 0F ? ? 4C 8B ? 48 8B ? 45 33 ? 44 89");
-
-    // RakPeer::GetAveragePing — hooked to cache the live RTT whenever the game
-    // asks for it. We never call it ourselves: calling into RakNet off the
-    // network thread is not safe, so the HUD shows the last value the game
-    // itself requested.
+    // RakPeer::GetAveragePing — hooked read-only to cache the RTT the game
+    // itself queries. We never call it: reaching into RakNet off the network
+    // thread is not safe.
     addSignature("RakPeer::GetAveragePing",
-        "48 8B C4 55 48 8D 6C 24 ? 48 81 EC ? ? ? ? 0F 10 4A ? 4C 8B 1A 4C 3B 1D ? ? ? ? 0F 10 42 ? 48 89 58 ? 48 8B D9 0F 10 52 ? 0F 10 5A ? 0F 10 62 ? 0F 10 6A ? 0F 29 70 ? 0F 10 72 ? 0F 29 78 ? 0F B7 82 ? ? ? ? 0F 10 BA ? ? ? ? 66 89 45 ? 0F B7 82 ? ? ? ? 66 89 45 ? 0F 11 4C 24 ? 74 ? 44 8B 49");
+        "48 81 EC ? ? ? ? 48 8B 05 ? ? ? ? 48 31 E0 48 89 84 24 ? ? ? ? 4C 8B 02 4C 3B 05 ? ? ? ? 0F 85 ? ? ? ? 0F B7 42 ? 44 0F B7 82 ? ? ? ? 44 0F B7 8A ? ? ? ? 66 89 44 24 ? 0F 10 42 ? 0F 10 4A ? 0F 10 52 ? 0F 10 5A ? 0F 11 44 24 ? 0F 11 4C 24 ? 0F 11 54 24 ? 0F 11 5C 24 ? 0F 10 42 ? 0F 11 44 24 ? 0F 10 42 ? 0F 11 44 24 ? 0F 10 42 ? 0F 11 84 24 ? ? ? ? 0F 10 82 ? ? ? ? 0F 11 84 24 ? ? ? ? 66 44 89 8C 24 ? ? ? ? 66 44 89 84 24 ? ? ? ? 48 8D 54 24 ? 45 31 C0 45 31 C9 E8 ? ? ? ? BA");
 
-    // Time-of-day helper (the `time % 24000` computation) — hooked read-only so
-    // the Day Counter can derive absolute world time.
-    addSignature("TimeChanger", "44 8B C2 B8 ? ? ? ? F7 EA");
+    // Dimension::getTimeOfDay — hooked read-only for the Day Counter. Replaces
+    // the old "TimeChanger" helper, which no longer exists in this shape.
+    addSignature("Dimension::getTimeOfDay",
+        "48 63 C2 48 69 C8 ? ? ? ? 48 89 CA 48 C1 EA ? 48 C1 F9");
 
-    // ── Offsets ──
+    // Actor::attack(Actor* self, Actor* target, ...) — observed read-only for
+    // the Reach display. Replaces GameMode::attack: `this` is now the attacker
+    // directly, so no GameMode->player indirection is needed.
+    addSignature("Actor::attack",
+        "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 ? ? ? ? 0F 29 B5 ? ? ? ? 48 C7 85 ? ? ? ? ? ? ? ? 4D 89 CF 4D 89 C6 48 89 D6 48 89 CF 41 8B 80");
 
-    // Actor::position — Vec3 of the entity's feet. Carried from 1.21.5x and not
-    // overridden through 1.26.
-    addOffset("Actor::position", 0x44);
+    // ── Object-graph offsets ──
+    // ClientInstance is reached by walking globals rather than by hooking an
+    // update function: the chain is stable, needs no hook, and works before the
+    // first tick.
+    //
+    //   *(Platform_GameCore sig deref)          -> winMain
+    //   winMain + 0x08                          -> Platform_GameCore*
+    //   Platform_GameCore + 0x18                -> MinecraftGame*
+    //   MinecraftGame + 0x938                   -> map<uint8, shared_ptr<CI>>
+    addOffset("WinMain::platformGameCore",       0x08);
+    addOffset("Platform_GameCore::minecraftGame", 0x18);
+    addOffset("MinecraftGame::clientInstances",  0x938);
 
-    // GameMode -> owning Player. Stable since 1.20.30.
-    addOffset("Gamemode::player", 0x8);
+    // ClientInstance
+    addOffset("ClientInstance::minecraftGame",   0x1A0);
+    addOffset("ClientInstance::levelRenderer",   0x1B8);
+    addOffset("ClientInstance::packetSender",    0x1C8);
+    addOffset("ClientInstance::guiData",         0x648);
+    addOffset("ClientInstance::options",         0xD78);
+    // Vtable *index*, not a byte offset.
+    addOffset("ClientInstance::getLocalPlayerVIndex", 0x1F);
 
-    // ── Player containers (armor + inventory HUDs) ──
-    // These move between builds more often than anything else here; treat them
-    // as the first suspects when a HUD shows nonsense rather than nothing.
-    addOffset("Actor::armorContainer",         0x1670);
-    addOffset("Player::supplies",              0x9B8);   // -> PlayerInventory*
-    addOffset("PlayerInventory::container",    0x70);    // hotbar + main
-    addOffset("PlayerInventory::selectedSlot", 0x10);
+    // ── Actor ──
+    // Position moved into an ECS component: Actor holds a cached pointer to its
+    // StateVectorComponent, whose first field is the position. IEntityComponent
+    // is an empty base, so pos sits at offset 0.
+    addOffset("Actor::stateVector",              0x218);
+    addOffset("StateVectorComponent::pos",       0x00);
 
-    // ── ItemStack memory layout ──
-    // A Bedrock container is a contiguous std::vector<ItemStack>: the container
-    // base holds [begin, end) pointers, and slots are indexed by stride.
-    // Registered as named offsets rather than inlined in GameSDK so that every
-    // build-specific number in the project stays inside this one file — see the
-    // containment rule in docs/acknowledgements.md.
-    addOffset("Container::begin",        0x00);
-    addOffset("Container::end",          0x08);
-    addOffset("ItemStack::stride",       0x88);
-    addOffset("ItemStack::item",         0x08);   // Item*; null == air
-    addOffset("ItemStack::count",        0x20);   // uint8
-    addOffset("ItemStack::auxValue",     0x22);   // int16, used as damage
+    // ── Player containers ──
+    // Held item is reachable; armor is not (see GameSDK::armor).
+    addOffset("Player::supplies",                0x5B8);
+    addOffset("PlayerInventory::selectedSlot",   0x10);
+    addOffset("PlayerInventory::inventory",      0xB8);
+    // Inventory::getItem(int) is virtual — far more robust than walking the
+    // backing vector by hand, which is what the previous table did.
+    addOffset("Inventory::getItemVIndex",        7);
+
+    // ── ItemStack layout ──
+    // The previous table had count and aux transposed and the stride 0x10 too
+    // small. Corrected from ItemStackBase's declared field order.
+    addOffset("ItemStack::size",                 0x98);
+    addOffset("ItemStack::item",                 0x08);   // Item**; null == air
+    addOffset("ItemStack::auxValue",             0x20);   // int16
+    addOffset("ItemStack::count",                0x22);   // uint8
 }
 
 } // namespace glacier::memory

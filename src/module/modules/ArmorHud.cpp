@@ -6,13 +6,13 @@
 
 namespace glacier {
 
-// Armor slots with durability bars, plus the held item.
+// Held item, and armor slots where the build allows reading them.
 //
-// Depends on the player-container offsets, which are the entries most likely to
-// break on a game update. It fails soft: when the offsets are wrong or the
-// player isn't in a world, armor() returns invalid stacks and this draws empty
-// slots rather than garbage. A row of empty slots while wearing armor is the
-// signal that Player::supplies / Actor::armorContainer need re-deriving.
+// On the current target build armor is NOT readable: it moved behind an ECS
+// component lookup (ActorEquipmentComponent, resolved through the entity
+// registry by type hash) and there is no fixed Actor->armorContainer offset any
+// more. Rather than read a stale offset and draw convincing nonsense, the
+// module says so on screen. See GameSDK::armor().
 class ArmorHud final : public HudModule {
 public:
     ArmorHud()
@@ -24,6 +24,7 @@ public:
         addSetting(Setting{ "bars", "Durability bars", true });
         addSetting(Setting{ "counts", "Stack counts", true });
         addSetting(Setting{ "empty", "Show empty slots", true });
+        addSetting(Setting{ "notice", "Explain when armor is unreadable", true });
     }
 
     ui::Rect writeHudBody(const ui::Rect& origin, float scale) override {
@@ -31,17 +32,29 @@ public:
         const float gap  = settingFloat("gap", 4.0f) * scale;
         const bool  showEmpty = settingBool("empty", true);
 
-        const auto armor = sdk::GameSDK::get().armor();
+        auto& sdkRef = sdk::GameSDK::get();
         float x = origin.x;
 
-        for (const auto& stack : armor) {
-            if (!stack.valid && !showEmpty) continue;
-            drawSlot(x, origin.y, cell, stack);
-            x += cell + gap;
+        if (sdkRef.armorSupported()) {
+            for (const auto& stack : sdkRef.armor()) {
+                if (!stack.valid && !showEmpty) continue;
+                drawSlot(x, origin.y, cell, stack);
+                x += cell + gap;
+            }
+        } else if (settingBool("notice", true)) {
+            // One honest line beats four blank boxes that look like "you have
+            // no armor equipped".
+            auto& r = ui::Renderer::get();
+            const char* msg = "Armor unavailable on this build";
+            const float size = cell * 0.42f;
+            const float w = r.measureText(msg, size, false);
+            r.drawText(msg, ui::Rect{ x, origin.y, w + 4.0f, cell },
+                       textColor().withAlpha(0.5f), size);
+            x += w + gap;
         }
 
         if (settingBool("held", true)) {
-            const auto held = sdk::GameSDK::get().heldItem();
+            const auto held = sdkRef.heldItem();
             if (held.valid || showEmpty) {
                 x += gap;   // visual break between armor and hand
                 drawSlot(x, origin.y, cell, held);

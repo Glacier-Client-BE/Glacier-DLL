@@ -5,6 +5,8 @@
 #include "../util/Logger.h"
 
 #include <cmath>
+#include <map>
+#include <memory>
 #include <Windows.h>
 
 namespace glacier::sdk {
@@ -13,23 +15,11 @@ using memory::SignatureManager;
 
 namespace {
 
-// ── ClientInstance::update capture hook ──
-// Captures the live ClientInstance pointer each tick. Preferred over chasing a
-// global: the pointer is handed to us by the game itself, so it stays correct
-// across builds that move or restructure their globals.
-using UpdateFn = void(__fastcall*)(void*);
-UpdateFn o_update = nullptr;
-
-void __fastcall hkUpdate(void* self) {
-    GameSDK::get().setClientInstance(self);
-    o_update(self);
-}
-
 // ── Options::getGamma hook (Fullbright) ──
 // Returns the override while Fullbright is on and the game's real value
 // otherwise. Hooking the accessor rather than writing the Options field means
-// the player's saved brightness is never actually modified — nothing to restore
-// if the client is unloaded abruptly.
+// the player's saved brightness is never modified — nothing to restore if the
+// client is unloaded abruptly.
 using GammaFn = float(__fastcall*)(void*);
 GammaFn o_getGamma = nullptr;
 std::atomic<float> s_gammaOverride{ -1.0f };
@@ -40,24 +30,19 @@ float __fastcall hkGetGamma(void* self) {
     return ov >= 0.0f ? ov : real;
 }
 
-// ItemStack::getMaxDamage(ItemStack*) -> int. Called directly, not hooked.
-using GetMaxDamageFn = int(__fastcall*)(void*);
-GetMaxDamageFn p_getMaxDamage = nullptr;
-
-// ── GameMode::attack hook (Reach display) ──
+// ── Actor::attack hook (Reach display) ──
 // Strictly observational: record, then call through unmodified. Glacier does
-// not alter attacks — see the scope boundary in README.
-using AttackFn = void(__fastcall*)(void*, void*, bool);
+// not alter attacks — see the scope boundary in README. Unlike the previous
+// GameMode::attack shape, `self` is the attacker directly.
+using AttackFn = void(__fastcall*)(void*, void*, void*);
 AttackFn o_attack = nullptr;
 
-void __fastcall hkAttack(void* gameMode, void* target, bool a3) {
-    GameSDK::get().recordAttack(gameMode, target);
-    o_attack(gameMode, target, a3);
+void __fastcall hkAttack(void* self, void* target, void* a3) {
+    GameSDK::get().recordAttack(self, target);
+    o_attack(self, target, a3);
 }
 
 // ── RakPeer::GetAveragePing hook ──
-// Caches whatever the game asks for. We never call this ourselves: reaching
-// into RakNet off the network thread isn't safe.
 using PingFn = std::int32_t(__fastcall*)(void*, void*);
 PingFn o_getAveragePing = nullptr;
 
@@ -69,17 +54,23 @@ std::int32_t __fastcall hkGetAveragePing(void* peer, void* addressOrGuid) {
     return result;
 }
 
-// ── Time-of-day hook (Day Counter) ──
-// The game calls this helper with the raw tick count to reduce it mod 24000.
-// We only read the input, then call through.
-using TimeFn = int(__fastcall*)(void*, std::int64_t);
-TimeFn o_timeOfDay = nullptr;
+// ── Dimension::getTimeOfDay hook (Day Counter) ──
+// Read-only: capture the raw tick count the game passes in, then call through.
+using TimeFn = int(__fastcall*)(void*, int);
+TimeFn o_getTimeOfDay = nullptr;
 
-int __fastcall hkTimeOfDay(void* a1, std::int64_t rawTicks) {
-    if (rawTicks >= 0 && rawTicks < 0x7FFFFFFF) {
-        GameSDK::get().cacheWorldTime(static_cast<int>(rawTicks));
+int __fastcall hkGetTimeOfDay(void* self, int rawTicks) {
+    if (rawTicks >= 0) {
+        GameSDK::get().cacheWorldTime(rawTicks);
     }
-    return o_timeOfDay(a1, rawTicks);
+    return o_getTimeOfDay(self, rawTicks);
+}
+
+// Reads a pointer field, tolerating a null base so a broken chain degrades to
+// nullptr rather than faulting.
+inline void* deref(void* base, std::ptrdiff_t offset) {
+    if (!base) return nullptr;
+    return *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(base) + offset);
 }
 
 } // namespace
@@ -91,31 +82,26 @@ bool GameSDK::resolve() {
     sigs.seedBedrock();
     sigs.scanAll();
 
-    // Decode getLocalPlayer's vtable index from the call-site signature: the
-    // 4-byte displacement at sig+9 is the byte offset into the vtable, and
-    // entries are pointer-sized, so /8 yields the index.
-    const auto idxSite = sigs.sig("ClientInstance::getLocalPlayerIndex");
-    if (!idxSite) {
-        LOG_ERROR("ClientInstance::getLocalPlayerIndex not resolved — aborting attach");
+    // The whole object graph hangs off this one global. Without it there is no
+    // player, no world, and nothing worth attaching for.
+    const auto pgcSite = sigs.sig("Platform_GameCore");
+    if (!pgcSite) {
+        LOG_ERROR("Platform_GameCore not resolved — aborting attach");
         return false;
     }
-    m_localPlayerVIndex = *reinterpret_cast<const std::int32_t*>(idxSite + 9) / 8;
 
-    // A nonsense index means the signature matched the wrong site (or the call
-    // shape changed); calling through it would jump to an arbitrary address.
-    if (m_localPlayerVIndex < 0 || m_localPlayerVIndex > 1024) {
-        LOG_ERROR("decoded implausible getLocalPlayer vtable index ({}) — aborting attach",
+    // `mov [rip+disp], r15`: the RIP-relative operand at +3 addresses the
+    // global itself.
+    m_gameCoreGlobal = memory::offsetFromSig(pgcSite, 3);
+    if (!m_gameCoreGlobal) {
+        LOG_ERROR("could not decode the Platform_GameCore global — aborting attach");
+        return false;
+    }
+
+    m_localPlayerVIndex = static_cast<int>(sigs.offset("ClientInstance::getLocalPlayerVIndex"));
+    if (m_localPlayerVIndex <= 0 || m_localPlayerVIndex > 1024) {
+        LOG_ERROR("implausible getLocalPlayer vtable index ({}) — aborting attach",
                   m_localPlayerVIndex);
-        return false;
-    }
-    LOG_INFO("getLocalPlayer vtable index = {}", m_localPlayerVIndex);
-
-    // Optional: durability bars degrade to "no bar" without it.
-    p_getMaxDamage = reinterpret_cast<GetMaxDamageFn>(sigs.sig("ItemStack::getMaxDamage"));
-
-    // Without the capture hook target we can never reach the player at all.
-    if (!sigs.sig("ClientInstance::update")) {
-        LOG_ERROR("ClientInstance::update not resolved — aborting attach");
         return false;
     }
 
@@ -129,26 +115,19 @@ void GameSDK::installHooks() {
     auto& sigs  = SignatureManager::get();
     auto& hooks = HookManager::get();
 
-    if (const auto addr = sigs.sig("ClientInstance::update")) {
-        hooks.create<UpdateFn>("ClientInstance::update",
-                               reinterpret_cast<void*>(addr), &hkUpdate, &o_update);
-    }
-
-    // Not attach-blocking: a missing gamma hook costs Fullbright, nothing else.
+    // Every hook here is optional: each drives exactly one feature, which
+    // reports "--" or no-ops when its signature is missing.
     if (const auto addr = sigs.sig("Options::getGamma")) {
         hooks.create<GammaFn>("Options::getGamma",
                               reinterpret_cast<void*>(addr), &hkGetGamma, &o_getGamma);
     } else {
         LOG_WARN("Options::getGamma not resolved — Fullbright will no-op");
     }
-
-    // Instrumentation hooks. Every one of these is optional and drives exactly
-    // one HUD, which displays "--" when its hook never installed.
-    if (const auto addr = sigs.sig("GameMode::attack")) {
-        hooks.create<AttackFn>("GameMode::attack",
+    if (const auto addr = sigs.sig("Actor::attack")) {
+        hooks.create<AttackFn>("Actor::attack",
                                reinterpret_cast<void*>(addr), &hkAttack, &o_attack);
     } else {
-        LOG_WARN("GameMode::attack not resolved — Reach display will show no data");
+        LOG_WARN("Actor::attack not resolved — Reach display will show no data");
     }
     if (const auto addr = sigs.sig("RakPeer::GetAveragePing")) {
         hooks.create<PingFn>("RakPeer::GetAveragePing",
@@ -156,20 +135,47 @@ void GameSDK::installHooks() {
     } else {
         LOG_WARN("RakPeer::GetAveragePing not resolved — Ping display unavailable");
     }
-    if (const auto addr = sigs.sig("TimeChanger")) {
-        hooks.create<TimeFn>("TimeChanger",
-                             reinterpret_cast<void*>(addr), &hkTimeOfDay, &o_timeOfDay);
+    if (const auto addr = sigs.sig("Dimension::getTimeOfDay")) {
+        hooks.create<TimeFn>("Dimension::getTimeOfDay",
+                             reinterpret_cast<void*>(addr), &hkGetTimeOfDay, &o_getTimeOfDay);
     } else {
-        LOG_WARN("TimeChanger not resolved — Day Counter will show no data");
+        LOG_WARN("Dimension::getTimeOfDay not resolved — Day Counter will show no data");
     }
 }
 
+// ─── Object graph ────────────────────────────────────────────────────────────
+
 ClientInstance* GameSDK::clientInstance() const {
-    return reinterpret_cast<ClientInstance*>(m_clientInstance.load(std::memory_order_relaxed));
+    if (!m_resolved || !m_gameCoreGlobal) return nullptr;
+
+    auto& sigs = SignatureManager::get();
+
+    // Walked fresh each call rather than cached. The chain is three pointer
+    // reads — far cheaper than the class of bug you get from holding a stale
+    // ClientInstance across a world change or a disconnect.
+    void* winMain = *reinterpret_cast<void**>(m_gameCoreGlobal);
+    void* gameCore = deref(winMain, sigs.offset("WinMain::platformGameCore"));
+    void* mcGame = deref(gameCore, sigs.offset("Platform_GameCore::minecraftGame"));
+    if (!mcGame) return nullptr;
+
+    // MinecraftGame holds its ClientInstances in a std::map keyed by a small
+    // index; entry 0 is the primary (local) one. Reinterpreting the game's map
+    // through our own std::map works because both are built with the MSVC STL
+    // and share its layout — the same assumption every client in this space
+    // makes. It is also why this is the single most fragile read in the SDK.
+    using InstanceMap = std::map<std::uint8_t, std::shared_ptr<ClientInstance>>;
+    const auto mapAddr = reinterpret_cast<std::uintptr_t>(mcGame)
+                       + static_cast<std::uintptr_t>(sigs.offset("MinecraftGame::clientInstances"));
+
+    const auto& instances = *reinterpret_cast<const InstanceMap*>(mapAddr);
+    const auto it = instances.find(0);
+    if (it == instances.end()) return nullptr;
+
+    return it->second.get();
 }
 
 LocalPlayer* GameSDK::localPlayer() const {
-    void* ci = m_clientInstance.load(std::memory_order_relaxed);
+    void* ci = clientInstance();
     if (!ci || m_localPlayerVIndex < 0) return nullptr;
     return memory::callVirtualI<LocalPlayer*>(
         static_cast<std::uint32_t>(m_localPlayerVIndex), ci);
@@ -179,10 +185,17 @@ std::optional<Vec3> GameSDK::playerPosition() const {
     auto* lp = localPlayer();
     if (!lp) return std::nullopt;
 
-    const auto off = SignatureManager::get().offset("Actor::position");
-    if (off == 0) return std::nullopt;
+    auto& sigs = SignatureManager::get();
 
-    return memory::memberAt<Vec3>(lp, off);
+    // Position lives in an ECS component now; Actor caches a pointer to it.
+    void* state = deref(lp, sigs.offset("Actor::stateVector"));
+    if (!state) return std::nullopt;
+
+    const Vec3 pos = memory::memberAt<Vec3>(state, sigs.offset("StateVectorComponent::pos"));
+    if (!std::isfinite(pos.x) || !std::isfinite(pos.y) || !std::isfinite(pos.z)) {
+        return std::nullopt;
+    }
+    return pos;
 }
 
 void GameSDK::setGammaOverride(float gamma) {
@@ -218,22 +231,19 @@ std::optional<int> GameSDK::worldTime() const {
     return t;
 }
 
-void GameSDK::recordAttack(void* gameMode, void* target) {
-    if (!gameMode || !target) return;
+void GameSDK::recordAttack(void* attacker, void* target) {
+    if (!attacker || !target) return;
 
     auto& sigs = SignatureManager::get();
-    const auto posOff = sigs.offset("Actor::position");
-    const auto playerOff = sigs.offset("Gamemode::player");
-    if (posOff == 0) return;
+    const auto stateOff = sigs.offset("Actor::stateVector");
+    const auto posOff   = sigs.offset("StateVectorComponent::pos");
 
-    // The attacker is the GameMode's owning player rather than localPlayer():
-    // reaching through the object we were handed avoids a virtual call on a
-    // pointer that may not be the local player at all.
-    void* attacker = memory::memberAt<void*>(gameMode, playerOff);
-    if (!attacker) return;
+    void* attackerState = deref(attacker, stateOff);
+    void* targetState   = deref(target, stateOff);
+    if (!attackerState || !targetState) return;
 
-    const Vec3 from = memory::memberAt<Vec3>(attacker, posOff);
-    const Vec3 to   = memory::memberAt<Vec3>(target, posOff);
+    const Vec3 from = memory::memberAt<Vec3>(attackerState, posOff);
+    const Vec3 to   = memory::memberAt<Vec3>(targetState, posOff);
 
     const float dx = to.x - from.x;
     const float dy = to.y - from.y;
@@ -258,49 +268,22 @@ std::optional<float> GameSDK::lastAttackDistance(std::uint64_t* ageMs) const {
 
 // ─── Containers ──────────────────────────────────────────────────────────────
 
-ItemStack GameSDK::readSlot(std::uintptr_t containerBase, int index) const {
-    ItemStack stack;
-    if (!containerBase || index < 0) return stack;
+ItemStack GameSDK::readStack(void* stackPtr) const {
+    ItemStack out;
+    if (!stackPtr) return out;
 
     auto& sigs = SignatureManager::get();
-    const auto stride = sigs.offset("ItemStack::stride");
-    if (stride <= 0) return stack;
 
-    // A Bedrock container is a contiguous std::vector<ItemStack>: read the
-    // [begin, end) pointers, bounds-check, then index by stride. Every offset
-    // comes from the registry — see the containment rule in Signatures.cpp.
-    const auto begin = *reinterpret_cast<std::uintptr_t*>(
-        containerBase + sigs.offset("Container::begin"));
-    const auto end = *reinterpret_cast<std::uintptr_t*>(
-        containerBase + sigs.offset("Container::end"));
-    if (!begin || begin >= end) return stack;
+    // A null Item** means the slot is empty (air), which is a valid answer
+    // rather than a failure.
+    void* item = deref(stackPtr, sigs.offset("ItemStack::item"));
+    if (!item) return out;
 
-    const auto slots = static_cast<std::ptrdiff_t>((end - begin) / static_cast<std::uintptr_t>(stride));
-    if (index >= slots) return stack;
-
-    const auto slot = begin + static_cast<std::uintptr_t>(index) * static_cast<std::uintptr_t>(stride);
-    const auto item = *reinterpret_cast<std::uintptr_t*>(slot + sigs.offset("ItemStack::item"));
-    if (!item) return stack;   // empty slot (air)
-
-    stack.valid  = true;
-    stack.count  = *reinterpret_cast<std::uint8_t*>(slot + sigs.offset("ItemStack::count"));
-    stack.damage = *reinterpret_cast<std::int16_t*>(slot + sigs.offset("ItemStack::auxValue"));
-    if (p_getMaxDamage) {
-        stack.maxDurability = p_getMaxDamage(reinterpret_cast<void*>(slot));
-    }
-    return stack;
-}
-
-std::array<ItemStack, 4> GameSDK::armor() const {
-    std::array<ItemStack, 4> out{};
-    auto* lp = localPlayer();
-    if (!lp) return out;
-
-    const auto off = SignatureManager::get().offset("Actor::armorContainer");
-    if (off == 0) return out;
-
-    const auto base = reinterpret_cast<std::uintptr_t>(lp) + off;
-    for (int i = 0; i < 4; ++i) out[i] = readSlot(base, i);
+    out.valid  = true;
+    out.count  = *reinterpret_cast<std::uint8_t*>(
+        reinterpret_cast<std::uintptr_t>(stackPtr) + sigs.offset("ItemStack::count"));
+    out.damage = *reinterpret_cast<std::int16_t*>(
+        reinterpret_cast<std::uintptr_t>(stackPtr) + sigs.offset("ItemStack::auxValue"));
     return out;
 }
 
@@ -309,15 +292,41 @@ ItemStack GameSDK::heldItem() const {
     if (!lp) return {};
 
     auto& sigs = SignatureManager::get();
-    const auto suppliesOff = sigs.offset("Player::supplies");
-    if (suppliesOff == 0) return {};
 
-    const auto supplies = memory::memberAt<std::uintptr_t>(lp, suppliesOff);
+    void* supplies = deref(lp, sigs.offset("Player::supplies"));
     if (!supplies) return {};
 
-    const auto selected = memory::memberAt<int>(
-        reinterpret_cast<void*>(supplies), sigs.offset("PlayerInventory::selectedSlot"));
-    return readSlot(supplies + sigs.offset("PlayerInventory::container"), selected);
+    void* inventory = deref(supplies, sigs.offset("PlayerInventory::inventory"));
+    if (!inventory) return {};
+
+    const int slot = memory::memberAt<int>(supplies, sigs.offset("PlayerInventory::selectedSlot"));
+    if (slot < 0 || slot > 8) return {};   // hotbar only
+
+    // Inventory::getItem is virtual. Calling it beats walking the backing
+    // vector by hand: the game does its own bounds checking, and one vtable
+    // index is a far smaller thing to keep correct than a stride plus two
+    // container pointers.
+    const auto index = static_cast<std::uint32_t>(sigs.offset("Inventory::getItemVIndex"));
+    void* stack = memory::callVirtualI<void*, int>(index, inventory, slot);
+    return readStack(stack);
+}
+
+std::array<ItemStack, 4> GameSDK::armor() const {
+    // Not supported on this build.
+    //
+    // Armor moved behind an ECS component lookup: Actor::getArmor resolves
+    // ActorEquipmentComponent through the entity registry by type hash, which
+    // needs an entt sparse-set walk Glacier does not implement yet. There is no
+    // fixed Actor->armorContainer offset to read any more.
+    //
+    // Returning empty invalid stacks is deliberate — the Armor HUD renders
+    // empty slots and says so, rather than reading an offset that no longer
+    // means what it used to and drawing convincing nonsense.
+    return {};
+}
+
+bool GameSDK::armorSupported() const {
+    return false;
 }
 
 } // namespace glacier::sdk
