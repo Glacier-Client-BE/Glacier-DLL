@@ -234,6 +234,7 @@ void Renderer::releaseSharedSurface() {
 }
 
 void Renderer::releaseGameResources() {
+    safeRelease(m_backBufferRtv);
     safeRelease(m_srv);
     safeRelease(m_readMutex);
     safeRelease(m_gameTexture);
@@ -443,6 +444,7 @@ bool Renderer::beginFrame(IDXGISwapChain* swapChain, ID3D11Device* device,
     m_drawing = true;
     m_clipDepth = 0;
     m_frameContext = context;
+    m_frameSwapChain = swapChain;
     return true;
 }
 
@@ -467,6 +469,34 @@ void Renderer::endFrame() {
 
     composite(m_frameContext);
     m_frameContext = nullptr;
+    m_frameSwapChain = nullptr;
+}
+
+// Returns a render-target view of the swap chain's back buffer, cached across
+// frames. GetBuffer+CreateRenderTargetView every frame would be wasteful, but
+// the cache must be dropped whenever the back buffer is recreated (resize), or
+// we would be drawing into a dead surface.
+ID3D11RenderTargetView* Renderer::backBufferRtv() {
+    if (m_backBufferRtv) return m_backBufferRtv;
+    if (!m_frameSwapChain || !m_gameDevice) return nullptr;
+
+    ID3D11Texture2D* backBuffer = nullptr;
+    if (FAILED(m_frameSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D),
+                                           reinterpret_cast<void**>(&backBuffer)))
+        || !backBuffer) {
+        return nullptr;
+    }
+
+    const HRESULT hr = m_gameDevice->CreateRenderTargetView(backBuffer, nullptr,
+                                                            &m_backBufferRtv);
+    safeRelease(backBuffer);
+    if (FAILED(hr)) {
+        LOG_ERROR("back-buffer RTV creation failed: {:#x}", static_cast<unsigned>(hr));
+        m_backBufferRtv = nullptr;
+        return nullptr;
+    }
+    LOG_INFO("overlay bound to the game's back buffer");
+    return m_backBufferRtv;
 }
 
 void Renderer::composite(ID3D11DeviceContext* context) {
@@ -528,8 +558,22 @@ void Renderer::composite(ID3D11DeviceContext* context) {
     D3D11_PRIMITIVE_TOPOLOGY oldTopology{};
     context->IAGetPrimitiveTopology(&oldTopology);
 
-    // Draw the overlay. Render target stays whatever the game had bound — that
-    // is the back buffer at Present time, which is exactly where we want it.
+    // Bind the back buffer explicitly.
+    //
+    // This is NOT optional, and assuming otherwise is why the overlay drew
+    // nothing while every log line reported success. At Present time the game
+    // has usually already unbound its render target, so inheriting "whatever
+    // was bound" means drawing into nothing. And if a depth-stencil view is
+    // still bound, our triangle at z=0 gets depth-tested away. Passing nullptr
+    // for the DSV removes the depth test entirely.
+    ID3D11RenderTargetView* rtv = backBufferRtv();
+    if (!rtv) {
+        warnOnce("could not bind the back buffer — overlay cannot composite");
+        m_readMutex->ReleaseSync(kKeyWrite);
+        return;
+    }
+    context->OMSetRenderTargets(1, &rtv, nullptr);
+
     D3D11_VIEWPORT vp{};
     vp.Width = m_width;
     vp.Height = m_height;

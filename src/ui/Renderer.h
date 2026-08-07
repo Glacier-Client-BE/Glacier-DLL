@@ -106,6 +106,7 @@ private:
     bool createGameResources(ID3D11Device* device);
     void releaseGameResources();
     void composite(ID3D11DeviceContext* context);
+    ID3D11RenderTargetView* backBufferRtv();
 
     // Text formats are immutable and reused every frame — creating one per
     // drawText call would allocate thousands of COM objects per second. Cached
@@ -155,6 +156,7 @@ private:
     ID3D11BlendState*         m_blend       = nullptr;
     ID3D11SamplerState*       m_sampler     = nullptr;
     ID3D11RasterizerState*    m_raster      = nullptr;
+    ID3D11RenderTargetView*   m_backBufferRtv = nullptr;
 
     float m_width  = 0;
     float m_height = 0;
@@ -167,6 +169,7 @@ private:
     bool  m_drawing = false;
     int   m_clipDepth = 0;
     ID3D11DeviceContext* m_frameContext = nullptr;
+    IDXGISwapChain*      m_frameSwapChain = nullptr;
 };
 
 } // namespace glacier::ui
