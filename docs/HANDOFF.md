@@ -64,25 +64,25 @@ These each cost a debugging cycle already. Don't re-derive them.
    toggled twice and the menu appeared never to open. The polling loop is the
    single owner; WndProc only swallows the key.
 
-3. **The overlay device must be on the game's adapter.** Keyed-mutex shared
-   textures cannot cross adapters. This machine runs Bedrock on *Intel UHD
-   Graphics*; creating our device on the default adapter silently broke all
-   compositing. `Renderer::initialize(gameDevice)` is called lazily from
-   `beginFrame` for exactly this reason.
+3. **The overlay draws straight onto the game's back buffer.** `Renderer` calls
+   `D2D1CreateDeviceContext` on the swap chain's DXGI surface, on the game's own
+   device — Flarial's approach. There is no second device, no shared texture, no
+   keyed mutex and no compositing pass.
 
-4. **`composite()` must bind the back buffer explicitly.** At Present time the
-   game has already unbound its render target. Bind with a **null DSV** so the
-   fullscreen triangle isn't depth-tested away. This was the "renders nothing
-   but logs success" bug.
+   Items 3–6 here used to describe that machinery: an adapter-matched private
+   device, a fullscreen-triangle composite needing an explicit null-DSV bind,
+   and a keyed-mutex protocol every early return had to preserve. **All of it is
+   gone.** It existed to work around a belief that D2D could not bind Bedrock's
+   back buffer, which item 6 had already recorded as wrong. Both hangs this
+   client suffered came from that machinery.
 
-5. **Every early return in the frame path must leave the keyed mutex at
-   `kKeyWrite`.** Bailing after `endFrame` released it to `kKeyRead` deadlocks
-   every later frame.
+4. **Nothing may hold a back-buffer reference when the game calls
+   `ResizeBuffers`.** This is the single rule that replaced all of the above —
+   see the ResizeBuffers section below. It is unconditional: no size comparison,
+   no zero check.
 
-6. **D2D can bind an R8G8B8A8 back buffer directly.** Flarial does. Our
-   private-device compositing was justified by a belief that it couldn't — that
-   was over-cautious. Compositing works and stays, but if it ever becomes a
-   problem, drawing straight onto the back buffer is a legitimate simplification.
+5. **`beginFrame` must not clear the target.** The target is the game's own
+   frame now. Clearing it erases the game.
 
 ## Open bugs
 
