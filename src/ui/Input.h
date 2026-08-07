@@ -2,14 +2,24 @@
 
 #include <Windows.h>
 
-// Input state shared between the WndProc hook (which writes it, on the window
-// thread) and the menu (which reads it, on the render thread).
+// Input state for the menu and the HUD editor.
 //
 // The menu is immediate-mode, so it needs *edges* ("was clicked this frame"),
-// not just levels ("is down"). WndProc sets the edge flags; the menu consumes
-// them once per frame via newFrame(), which clears them. That ordering means a
-// click is never seen twice and never missed, even though the two sides run on
-// different threads at different rates.
+// not just levels ("is down"). The edges are set once per frame and consumed by
+// newFrame() at the end of the menu's frame, so a click is never seen twice and
+// never missed.
+//
+// Mouse state is POLLED, not taken from WM_* messages. Bedrock reads the mouse
+// through RawInput, so WM_MOUSEMOVE / WM_LBUTTONDOWN are not reliably delivered
+// to our WndProc — the menu used to see the cursor parked at (0,0) with no
+// clicks at all, which is why nothing in it responded. pollMouse() is called
+// once per frame from the Present hook while the menu is open.
+//
+// pollMouse is the SINGLE owner of button edges. Do not also raise edges from
+// the WndProc: the poll observes the physical button before the message
+// arrives, so one press would produce two clicks — the same trap that made the
+// menu key appear to toggle twice. WndProc contributes only the wheel, which
+// cannot be polled.
 namespace glacier::ui {
 
 class Input {
@@ -17,6 +27,35 @@ public:
     static Input& get() {
         static Input instance;
         return instance;
+    }
+
+    // ── Written once per frame by the Present hook ──
+
+    // Samples the cursor position and button levels directly from the OS, and
+    // derives this frame's press/release edges from the change since the last
+    // poll. See the class comment for why this doesn't come from WM_* messages.
+    void pollMouse(HWND hwnd) {
+        POINT p{};
+        if (GetCursorPos(&p) && ScreenToClient(hwnd, &p)) {
+            m_x = static_cast<float>(p.x);
+            m_y = static_cast<float>(p.y);
+        }
+
+        const bool l = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        const bool r = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+
+        // The first poll after a reset only establishes a baseline. Without
+        // this, opening the menu while a button happens to be held would fire a
+        // click on whatever the menu drew under the cursor.
+        if (!m_polled) {
+            m_polled = true;
+            m_leftDown = l;
+            m_rightDown = r;
+            return;
+        }
+
+        if (l != m_leftDown)  { l ? onMouseDown(false) : onMouseUp(false); }
+        if (r != m_rightDown) { r ? onMouseDown(true)  : onMouseUp(true);  }
     }
 
     // ── Written by the WndProc hook ──
@@ -64,6 +103,7 @@ public:
         newFrame();
         m_leftDown = m_rightDown = false;
         m_lastKey = 0;
+        m_polled = false;
     }
 
 private:
@@ -74,6 +114,7 @@ private:
     bool  m_rightDown = false, m_rightPressed = false, m_rightReleased = false;
     float m_scroll = 0.0f;
     int   m_lastKey = 0;
+    bool  m_polled = false;   // has pollMouse established a button baseline?
 };
 
 } // namespace glacier::ui

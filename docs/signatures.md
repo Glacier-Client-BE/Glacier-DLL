@@ -58,6 +58,8 @@ work. Compiling is not confirmation.
 | `Options::getGamma` | signature | Hooked by Fullbright to return an override brightness | no | ⚠️ inherited |
 | `ItemStack::getMaxDamage` | signature | Called for durability bars | no | ⚠️ inherited |
 | `GameMode::attack` | signature | Observed (read-only) for Reach Display | no | ⚠️ inherited |
+| `ClientInstance::grabCursor` | signature | Called on menu close to hand the mouse back to gameplay | no | ⚠️ inherited |
+| `ClientInstance::releaseCursor` | signature | Called on menu open — this is what actually pauses look/move | no | ⚠️ inherited |
 | `RakPeer::GetAveragePing` | signature | Caches RTT for Ping display | no | ⚠️ inherited |
 | `TimeChanger` | signature | Caches world time for Day Counter | no | ⚠️ inherited |
 | `Gamemode::player` | offset `0x8` | GameMode -> owning Player, for Reach | no | ⚠️ inherited |
@@ -81,6 +83,7 @@ work. Compiling is not confirmation.
 | Ping | `RakPeer::GetAveragePing` | Shows `--` |
 | Day Counter | `TimeChanger` | Shows `Day --` |
 | Reach Display | `GameMode::attack`, `Gamemode::player` | Shows `Reach --` after a hit |
+| Menu (pause) | `ClientInstance::grabCursor` / `releaseCursor` | Menu still opens, but you can move and look behind it; a warning is logged at attach |
 
 Coordinates is the cheapest end-to-end check of the SDK: if it tracks your
 movement, the whole signature → hook → `ClientInstance` → `LocalPlayer` chain

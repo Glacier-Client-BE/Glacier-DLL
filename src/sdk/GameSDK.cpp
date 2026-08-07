@@ -67,6 +67,14 @@ int __fastcall hkGetTimeOfDay(void* self, int rawTicks) {
     return o_getTimeOfDay(self, rawTicks);
 }
 
+// ── ClientInstance::grabCursor / releaseCursor ──
+// Called directly rather than hooked. These are the game's own "is the mouse
+// captured by gameplay" toggle, which is the only thing that reliably stops
+// look and movement while the menu is up.
+using CursorFn = void(__fastcall*)(void*);
+CursorFn s_grabCursor = nullptr;
+CursorFn s_releaseCursor = nullptr;
+
 // Reads a pointer field, tolerating a null base so a broken chain degrades to
 // nullptr rather than faulting.
 inline void* deref(void* base, std::ptrdiff_t offset) {
@@ -104,6 +112,15 @@ bool GameSDK::resolve() {
         LOG_ERROR("implausible getLocalPlayer vtable index ({}) — aborting attach",
                   m_localPlayerVIndex);
         return false;
+    }
+
+    // Optional: without these the menu still opens, it just can't pause the
+    // game. Warn rather than abort, and say what is lost.
+    s_grabCursor    = reinterpret_cast<CursorFn>(sigs.sig("ClientInstance::grabCursor"));
+    s_releaseCursor = reinterpret_cast<CursorFn>(sigs.sig("ClientInstance::releaseCursor"));
+    if (!s_grabCursor || !s_releaseCursor) {
+        LOG_WARN("ClientInstance::grabCursor/releaseCursor not resolved — the game will "
+                 "keep receiving movement and look input while the menu is open");
     }
 
     m_resolved = true;
@@ -205,6 +222,23 @@ void GameSDK::setGammaOverride(float gamma) {
 
 bool GameSDK::gammaHookActive() const {
     return o_getGamma != nullptr;
+}
+
+bool GameSDK::cursorControlAvailable() const {
+    return s_grabCursor != nullptr && s_releaseCursor != nullptr;
+}
+
+bool GameSDK::setCursorGrabbed(bool grabbed) {
+    if (!cursorControlAvailable()) return false;
+
+    // No ClientInstance means no world — on the main menu the cursor is already
+    // the game's own, so there is nothing to do and nothing to report as a
+    // failure the caller should work around.
+    void* ci = clientInstance();
+    if (!ci) return false;
+
+    (grabbed ? s_grabCursor : s_releaseCursor)(ci);
+    return true;
 }
 
 // ─── Instrumentation caches ──────────────────────────────────────────────────

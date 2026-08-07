@@ -49,10 +49,16 @@ private:
     void removeWndProc();
     static LRESULT CALLBACK wndProc(HWND, UINT, WPARAM, LPARAM);
 
-    // Frees and reveals the cursor while the menu is open. Input blocking
-    // itself happens in wndProc — this only handles cursor visibility, which
-    // the game would otherwise keep captured and hidden.
+    // Hands the cursor between the game and the menu by driving the game's own
+    // grab state (ClientInstance::grabCursor / releaseCursor). That is also what
+    // pauses look and movement: the game stops consuming the mouse once the
+    // cursor is released. Falls back to ShowCursor only when the game call
+    // isn't available.
     static void setCursorReleased(bool released);
+
+    // True while the ShowCursor fallback above is holding the cursor visible,
+    // so the matching decrement happens exactly once.
+    static inline bool s_cursorFallback = false;
     static bool isGameInputMessage(UINT msg);
 
     HMODULE           m_self        = nullptr;

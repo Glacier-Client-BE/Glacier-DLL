@@ -84,6 +84,20 @@ public:
     // user why it is doing nothing instead of silently failing.
     bool gammaHookActive() const;
 
+    // Drives the game's own cursor grab state. Releasing the cursor is what
+    // actually pauses look and movement: Bedrock reads the mouse through
+    // RawInput, so swallowing window messages never stopped the player from
+    // moving behind the menu. Grabbing it again restores normal play.
+    //
+    // Returns false if the call couldn't be made (signature missing, or no
+    // ClientInstance yet), so the caller can fall back to hiding the cursor
+    // itself rather than leaving the user with no pointer at all.
+    bool setCursorGrabbed(bool grabbed);
+
+    // True when both cursor signatures resolved. Independent of whether a
+    // ClientInstance currently exists.
+    bool cursorControlAvailable() const;
+
     // ── Instrumentation caches ──
     // Each is fed by a hook and read by exactly one HUD. All return a "no data"
     // sentinel rather than a stale value when the hook never fired, so a

@@ -67,6 +67,16 @@ void SignatureManager::seedBedrock() {
     addSignature("Dimension::getTimeOfDay",
         "48 63 C2 48 69 C8 ? ? ? ? 48 89 CA 48 C1 EA ? 48 C1 F9");
 
+    // Called directly (not hooked) to hand the cursor back to the game when
+    // the menu closes. Driving the game's own grab state is what actually
+    // pauses look/move input — Bedrock reads RawInput, so swallowing window
+    // messages does nothing.
+    addSignature("ClientInstance::grabCursor",
+        "56 48 83 EC ? 48 89 CE 48 8B 01 48 8B 80 ? ? ? ? FF 15 ? ? ? ? 84 C0 74 ? 48 8B 8E ? ? ? ? 48 8B 01 48 8B 80 ? ? ? ? 48 8B 15 ? ? ? ? 48 83 C4 ? 5E 48 FF E2 90 48 83 C4 ? 5E C3 CC CC CC CC CC CC CC CC CC CC CC CC CC 56 48 83 EC");
+    // The other half of the pair, called when the menu opens.
+    addSignature("ClientInstance::releaseCursor",
+        "56 48 83 EC ? 48 89 CE 48 8B 01 48 8B 80 ? ? ? ? FF 15 ? ? ? ? 84 C0 74 ? 48 8B 8E ? ? ? ? 48 8B 01 48 8B 80 ? ? ? ? 48 8B 15 ? ? ? ? 48 83 C4 ? 5E 48 FF E2 90 48 83 C4 ? 5E C3 CC CC CC CC CC CC CC CC CC CC CC CC CC 56 53");
+
     // Observed read-only for the Reach display. `this` is the attacker, so
     // no GameMode->player indirection is needed.
     addSignature("Actor::attack",

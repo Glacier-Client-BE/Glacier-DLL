@@ -102,6 +102,19 @@ SIGNATURES: list[SigEntry] = [
         blank_before=True,
     ),
     SigEntry(
+        "ClientInstance::grabCursor", "ClientInstance::grabCursor",
+        "Called directly (not hooked) to hand the cursor back to the game when\n"
+        "// the menu closes. Driving the game's own grab state is what actually\n"
+        "// pauses look/move input — Bedrock reads RawInput, so swallowing window\n"
+        "// messages does nothing.",
+        blank_before=True,
+    ),
+    SigEntry(
+        "ClientInstance::releaseCursor", "ClientInstance::releaseCursor",
+        "The other half of the pair, called when the menu opens.",
+    ),
+
+    SigEntry(
         "Actor::attack", "Actor::attack",
         "Observed read-only for the Reach display. `this` is the attacker, so\n"
         "// no GameMode->player indirection is needed.",

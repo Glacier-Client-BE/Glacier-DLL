@@ -69,6 +69,17 @@ void Glacier::start(HMODULE self) {
         auto& gfx = ui::Renderer::get();
         if (!gfx.beginFrame(sc, dev, ctx)) return;
 
+        // Sample the mouse before anything hit-tests it. Polled rather than
+        // taken from WM_* messages because Bedrock consumes the mouse through
+        // RawInput — see the comment on ui::Input. Only while the menu is open:
+        // the HUD editor is active exactly then, and outside that a poll would
+        // feed gameplay clicks into UI state nothing is drawing.
+        if (ui::Menu::get().open()) {
+            if (HWND hwnd = D3DHook::get().window()) {
+                ui::Input::get().pollMouse(hwnd);
+            }
+        }
+
         RenderEvent ev{ gfx.width(), gfx.height() };
         EventBus::get().publish(ev);
 
@@ -192,11 +203,29 @@ void Glacier::removeWndProc() {
 }
 
 void Glacier::setCursorReleased(bool released) {
+    // Preferred path: drive the game's own grab state, exactly as the game does
+    // when it opens one of its own screens. That both reveals the cursor and
+    // stops gameplay from consuming the mouse — swallowing window messages
+    // never did the latter, because Bedrock reads RawInput directly.
+    if (sdk::GameSDK::get().setCursorGrabbed(!released)) {
+        // If a previous open had to fall back, undo that now so the OS cursor
+        // counter doesn't drift permanently out of balance.
+        if (!released && s_cursorFallback) {
+            while (ShowCursor(FALSE) >= 0) {}
+            s_cursorFallback = false;
+        }
+        return;
+    }
+
+    // Fallback: signatures missing, or there is no ClientInstance yet (main
+    // menu, loading). Make sure the user at least has a pointer to click with.
     if (released) {
         ClipCursor(nullptr);
         while (ShowCursor(TRUE) < 0) {}
-    } else {
+        s_cursorFallback = true;
+    } else if (s_cursorFallback) {
         while (ShowCursor(FALSE) >= 0) {}
+        s_cursorFallback = false;
     }
 }
 
@@ -256,14 +285,13 @@ LRESULT CALLBACK Glacier::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
     if (menu.open()) {
         switch (msg) {
-            case WM_MOUSEMOVE:
-                in.onMouseMove(static_cast<float>(GET_X_LPARAM(lParam)),
-                               static_cast<float>(GET_Y_LPARAM(lParam)));
-                break;
-            case WM_LBUTTONDOWN: in.onMouseDown(false); break;
-            case WM_LBUTTONUP:   in.onMouseUp(false);   break;
-            case WM_RBUTTONDOWN: in.onMouseDown(true);  break;
-            case WM_RBUTTONUP:   in.onMouseUp(true);    break;
+            // Position and button edges are NOT taken from here. They are polled
+            // once per frame in the Present hook, because Bedrock consumes the
+            // mouse through RawInput and these messages may never arrive. Adding
+            // them back would double-fire every click — see ui::Input.
+            //
+            // The wheel is the exception: there is no polling API for it, and a
+            // scroll produces no edge that could collide with the poll.
             case WM_MOUSEWHEEL:
                 in.onScroll(static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA);
                 break;
@@ -274,9 +302,11 @@ LRESULT CALLBACK Glacier::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                 break;
         }
 
-        // The game is "paused" behind the menu: every remaining game-input
-        // message is swallowed so the player can't move, look, or attack while
-        // clicking around the UI.
+        // Supplementary only. What actually pauses the game behind the menu is
+        // releasing the game's cursor grab (setCursorReleased) — Bedrock reads
+        // RawInput, so a swallowed WM_KEYDOWN stops nothing on its own. This
+        // remains because it costs nothing and does help for the messages the
+        // game does read from the queue.
         if (isGameInputMessage(msg)) {
             return 0;
         }

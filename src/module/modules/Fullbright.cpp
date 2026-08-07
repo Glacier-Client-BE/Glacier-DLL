@@ -19,7 +19,10 @@ class Fullbright final : public Module {
 public:
     Fullbright()
         : Module("Fullbright", "Brightens the world to remove darkness", Category::Visual, 'B') {
-        addSetting(Setting{ "gamma", "Gamma", 1.0f, 0.0f, 1.0f, 0.05f });
+        // 0..25, not 0..1. The game's gamma is not a normalized fraction: 1.0 is
+        // *normal* brightness, which is why a 0..1 slider defaulting to 1.0 made
+        // Fullbright look like it did nothing at all. Latite uses the same range.
+        addSetting(Setting{ "gamma", "Gamma", 15.0f, 0.0f, 25.0f, 0.5f });
     }
 
     void onEnable() override {

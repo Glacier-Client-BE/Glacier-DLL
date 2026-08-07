@@ -86,6 +86,10 @@ These each cost a debugging cycle already. Don't re-derive them.
 
 ## Open bugs
 
+> **Phase 6 status:** bugs 1–4 have fixes committed but **not verified in-game**.
+> They compile; nobody has injected them yet. See § "Verifying Phase 6" at the
+> end of this file for exactly what to check. Bug 5 is untouched.
+
 ### 1. Menu can't be interacted with — BLOCKS EVERYTHING ELSE
 
 The menu renders but does not respond to the mouse.
@@ -278,4 +282,24 @@ touching rendering, input, or signatures, say plainly that it's unverified and
 tell the user exactly what log line or on-screen behaviour would confirm it.
 
 `docs/signatures.md` tracks per-entry status; entries stay ⚠️ *inherited* until
-someone confirms them against a running client.
+someone confirms them against a running client. Note that its "Seeded" table has
+drifted from `src/memory/Signatures.cpp` (it still lists entries such as
+`ClientInstance::update`, `GameMode::attack`, and `Container::begin` that the
+current generated table does not contain) — worth a pass.
+
+## Verifying Phase 6
+
+What changed, and what confirms each piece. All of this is unverified: CI only
+proves it compiles.
+
+| Bug | Change | Confirms it works |
+|---|---|---|
+| 1 | `ui::Input::pollMouse` samples `GetCursorPos` + `GetAsyncKeyState` once per frame from the Present hook; WndProc no longer produces mouse position or button edges (it keeps only the wheel). | Open the menu and move the mouse: a sidebar category should highlight under the cursor, and clicking one should switch the module list. |
+| 2 | No separate fix — the HUD editor reads the same `Input`. | With the menu open, drag the Coordinates widget; it should follow the cursor and stay where dropped after a close/reopen. |
+| 3 | `GameSDK::setCursorGrabbed` calls `ClientInstance::grabCursor` / `releaseCursor`; `Glacier::setCursorReleased` drives it and only falls back to `ShowCursor` when the call is unavailable. | With the menu open you should not be able to move or look. On attach, no `grabCursor/releaseCursor not resolved` warning in the console. |
+| 4 | Fullbright's gamma setting is now `15.0` default over a `0..25` range. | Enabling Fullbright at night, or in a cave, visibly brightens the world. |
+
+If the menu still doesn't respond to clicks, the next thing to check is whether
+`D3DHook::window()` is the window the cursor is actually over —
+`ScreenToClient` against the wrong HWND yields plausible-looking but wrong
+coordinates, which is indistinguishable from "hit-testing is broken".
