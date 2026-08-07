@@ -1,0 +1,349 @@
+#include "Menu.h"
+
+#include "Input.h"
+#include "../module/ModuleManager.h"
+#include "../util/Logger.h"
+
+#include <algorithm>
+#include <array>
+
+namespace glacier::ui {
+
+namespace {
+
+// Phase 2 theme: flat, legible, no gradients or animation yet (Phase 4).
+constexpr auto kBackdrop   = Color::rgba(0x99000000);
+constexpr auto kPanel      = Color::rgba(0xF01A1D23);
+constexpr auto kSidebar    = Color::rgba(0xF0141619);
+constexpr auto kCard       = Color::rgba(0xFF23272F);
+constexpr auto kCardHover  = Color::rgba(0xFF2B3038);
+constexpr auto kAccent     = Color::rgba(0xFF4C9AFF);
+constexpr auto kText       = Color::rgba(0xFFE6E9EF);
+constexpr auto kTextDim    = Color::rgba(0xFF8A93A3);
+constexpr auto kTrack      = Color::rgba(0xFF3A404A);
+
+constexpr float kPanelW   = 620.0f;
+constexpr float kPanelH   = 440.0f;
+constexpr float kSidebarW = 150.0f;
+constexpr float kRowH     = 40.0f;
+constexpr float kPad      = 12.0f;
+
+constexpr std::array kCategories{
+    Category::Combat, Category::Movement, Category::Visual,
+    Category::Player, Category::World,    Category::Misc,
+};
+
+// Human-readable key name for the keybind widget. GetKeyNameTextW handles the
+// printable and named keys; the rest fall back to a numeric form so a bound key
+// is never displayed as blank.
+std::string keyName(int vk) {
+    if (vk == 0) return "None";
+
+    UINT scan = MapVirtualKeyW(static_cast<UINT>(vk), MAPVK_VK_TO_VSC);
+    switch (vk) {
+        case VK_LEFT: case VK_UP: case VK_RIGHT: case VK_DOWN:
+        case VK_PRIOR: case VK_NEXT: case VK_END: case VK_HOME:
+        case VK_INSERT: case VK_DELETE: case VK_DIVIDE: case VK_NUMLOCK:
+            scan |= 0x100;   // extended key
+            break;
+        default:
+            break;
+    }
+
+    wchar_t buf[64]{};
+    if (GetKeyNameTextW(static_cast<LONG>(scan) << 16, buf, 64) > 0) {
+        char out[128]{};
+        WideCharToMultiByte(CP_UTF8, 0, buf, -1, out, sizeof(out), nullptr, nullptr);
+        return out;
+    }
+    return "Key " + std::to_string(vk);
+}
+
+} // namespace
+
+void Menu::setOpen(bool open) {
+    m_open = open;
+    if (!open) {
+        // Drop any in-flight interaction, or it resumes when the menu reopens.
+        m_capturingModule = nullptr;
+        m_draggingSetting = nullptr;
+    }
+    Input::get().reset();
+}
+
+bool Menu::hovered(const Rect& r) const {
+    auto& in = Input::get();
+    return r.contains(in.mouseX(), in.mouseY());
+}
+
+bool Menu::clicked(const Rect& r) const {
+    return Input::get().leftPressed() && hovered(r);
+}
+
+void Menu::render() {
+    if (!m_open) return;
+
+    auto& r = Renderer::get();
+    auto& in = Input::get();
+
+    // A drag that ended anywhere (including outside the menu) must release.
+    if (!in.leftDown()) m_draggingSetting = nullptr;
+
+    const Rect screen{ 0, 0, r.width(), r.height() };
+    r.fillRect(screen, kBackdrop);
+
+    const Rect panel{
+        (r.width() - kPanelW) * 0.5f,
+        (r.height() - kPanelH) * 0.5f,
+        kPanelW, kPanelH
+    };
+    r.fillRoundedRect(panel, 10.0f, kPanel);
+
+    const Rect sidebar{ panel.x, panel.y, kSidebarW, panel.h };
+    drawSidebar(sidebar);
+
+    const Rect list{
+        panel.x + kSidebarW, panel.y + kPad,
+        panel.w - kSidebarW - kPad, panel.h - 2 * kPad
+    };
+    drawModuleList(list);
+
+    in.newFrame();
+}
+
+void Menu::drawSidebar(const Rect& area) {
+    auto& r = Renderer::get();
+
+    r.fillRoundedRect(area, 10.0f, kSidebar);
+    // Square off the inner edge so the sidebar meets the panel flush.
+    r.fillRect(Rect{ area.right() - 10.0f, area.y, 10.0f, area.h }, kSidebar);
+
+    r.drawText("GLACIER", Rect{ area.x + kPad, area.y + kPad, area.w - 2 * kPad, 28.0f },
+               kAccent, 17.0f, TextAlign::Left, true);
+
+    float y = area.y + 52.0f;
+    for (const auto cat : kCategories) {
+        const Rect row{ area.x + 8.0f, y, area.w - 16.0f, 32.0f };
+        const bool selected = (cat == m_category);
+
+        if (selected) {
+            r.fillRoundedRect(row, 6.0f, kAccent.withAlpha(0.16f));
+            r.fillRoundedRect(Rect{ row.x, row.y + 6.0f, 3.0f, row.h - 12.0f }, 1.5f, kAccent);
+        } else if (hovered(row)) {
+            r.fillRoundedRect(row, 6.0f, kCardHover.withAlpha(0.5f));
+        }
+
+        if (clicked(row)) {
+            m_category = cat;
+            m_scroll = 0.0f;
+        }
+
+        r.drawText(categoryName(cat), Rect{ row.x + 14.0f, row.y, row.w - 14.0f, row.h },
+                   selected ? kText : kTextDim, 14.0f);
+        y += 36.0f;
+    }
+
+    r.drawText("END unloads", Rect{ area.x + kPad, area.bottom() - 32.0f, area.w, 20.0f },
+               kTextDim.withAlpha(0.6f), 11.0f);
+}
+
+void Menu::drawModuleList(const Rect& area) {
+    auto& r = Renderer::get();
+    auto& in = Input::get();
+
+    if (hovered(area)) {
+        m_scroll -= in.scroll() * 40.0f;
+    }
+
+    r.pushClip(area);
+
+    Rect cursor{ area.x, area.y - m_scroll, area.w, 0 };
+    int shown = 0;
+
+    for (const auto& module : ModuleManager::get().modules()) {
+        if (module->category() != m_category) continue;
+        drawModuleCard(*module, cursor, area.w);
+        ++shown;
+    }
+
+    const float contentH = (cursor.y + m_scroll) - area.y;
+
+    r.popClip();
+
+    if (shown == 0) {
+        r.drawText("No modules in this category yet",
+                   Rect{ area.x, area.y + 20.0f, area.w, 24.0f },
+                   kTextDim, 13.0f, TextAlign::Center);
+        m_scroll = 0.0f;
+        return;
+    }
+
+    // Clamp after drawing: content height isn't known until the walk is done,
+    // and clamping to a stale height causes a visible jump on the next frame.
+    m_scroll = std::clamp(m_scroll, 0.0f, std::max(0.0f, contentH - area.h));
+}
+
+void Menu::drawModuleCard(Module& module, Rect& cursor, float width) {
+    auto& r = Renderer::get();
+
+    const Rect card{ cursor.x, cursor.y, width, kRowH };
+    const bool isHovered = hovered(card);
+    r.fillRoundedRect(card, 6.0f, isHovered ? kCardHover : kCard);
+
+    // Left region expands/collapses settings; the toggle on the right is a
+    // separate hit target so opening settings never flips the module.
+    const Rect toggleRect{ card.right() - 52.0f, card.y + 10.0f, 40.0f, 20.0f };
+    const Rect labelRect{ card.x + 12.0f, card.y, card.w - 76.0f, card.h };
+
+    if (Input::get().leftPressed() && hovered(labelRect)) {
+        m_expanded = (m_expanded == module.name()) ? std::string{} : module.name();
+    }
+
+    r.drawText(module.name(), Rect{ labelRect.x, card.y + 4.0f, labelRect.w, 20.0f },
+               module.enabled() ? kText : kTextDim, 14.0f, TextAlign::Left, true);
+    r.drawText(module.description(),
+               Rect{ labelRect.x, card.y + 20.0f, labelRect.w, 16.0f },
+               kTextDim.withAlpha(0.7f), 11.0f);
+
+    if (widgetToggle(toggleRect, module.enabled())) {
+        module.toggle();
+        LOG_INFO("{} {}", module.name(), module.enabled() ? "enabled" : "disabled");
+    }
+
+    cursor.y += kRowH + 4.0f;
+
+    if (m_expanded == module.name()) {
+        drawSettings(module, cursor, width);
+    }
+}
+
+void Menu::drawSettings(Module& module, Rect& cursor, float width) {
+    auto& r = Renderer::get();
+
+    const Rect keyRow{ cursor.x + 16.0f, cursor.y, width - 16.0f, 28.0f };
+    r.drawText("Keybind", Rect{ keyRow.x, keyRow.y, 140.0f, keyRow.h }, kTextDim, 12.0f);
+    widgetKeybind(Rect{ keyRow.right() - 110.0f, keyRow.y + 3.0f, 100.0f, 22.0f }, module);
+    cursor.y += 30.0f;
+
+    for (auto& setting : module.settings()) {
+        const Rect row{ cursor.x + 16.0f, cursor.y, width - 16.0f, 28.0f };
+        r.drawText(setting.label(), Rect{ row.x, row.y, 140.0f, row.h }, kTextDim, 12.0f);
+
+        switch (setting.type()) {
+            case SettingType::Bool: {
+                const Rect box{ row.right() - 50.0f, row.y + 4.0f, 40.0f, 20.0f };
+                if (widgetToggle(box, setting.asBool())) {
+                    setting.set(!setting.asBool());
+                }
+                break;
+            }
+            case SettingType::Float:
+            case SettingType::Int: {
+                const Rect track{ row.right() - 210.0f, row.y + 11.0f, 160.0f, 6.0f };
+                widgetSlider(track, setting);
+
+                const bool isInt = setting.type() == SettingType::Int;
+                const std::string value = isInt
+                    ? std::to_string(setting.asInt())
+                    : std::to_string(setting.asFloat()).substr(0, 4);
+                r.drawText(value, Rect{ row.right() - 44.0f, row.y, 40.0f, row.h },
+                           kText, 12.0f, TextAlign::Right);
+                break;
+            }
+            case SettingType::Key:
+                // Per-setting keybinds aren't used yet; the module-level bind
+                // above covers Phase 2. Drawn as a plain value so a module that
+                // declares one isn't silently ignored.
+                r.drawText(keyName(setting.asInt()),
+                           Rect{ row.right() - 110.0f, row.y, 100.0f, row.h },
+                           kText, 12.0f, TextAlign::Right);
+                break;
+        }
+        cursor.y += 30.0f;
+    }
+
+    cursor.y += 6.0f;
+}
+
+bool Menu::widgetToggle(const Rect& r, bool value) {
+    auto& gfx = Renderer::get();
+
+    const Color track = value ? kAccent : kTrack;
+    gfx.fillRoundedRect(r, r.h * 0.5f, track);
+
+    const float knobR = r.h - 6.0f;
+    const float knobX = value ? (r.right() - knobR - 3.0f) : (r.x + 3.0f);
+    gfx.fillRoundedRect(Rect{ knobX, r.y + 3.0f, knobR, knobR }, knobR * 0.5f,
+                        Color::rgba(0xFFFFFFFF));
+
+    if (hovered(r)) {
+        gfx.strokeRoundedRect(r, r.h * 0.5f, kAccent.withAlpha(0.5f), 1.5f);
+    }
+    return clicked(r);
+}
+
+bool Menu::widgetSlider(const Rect& r, Setting& setting) {
+    auto& gfx = Renderer::get();
+    auto& in  = Input::get();
+
+    // Grabbing anywhere on a padded band around the track starts a drag — a
+    // 6px-tall target is unusable otherwise.
+    const Rect grab = Rect{ r.x, r.y - 8.0f, r.w, r.h + 16.0f };
+    if (in.leftPressed() && hovered(grab)) {
+        m_draggingSetting = &setting;
+    }
+
+    const bool active = (m_draggingSetting == &setting);
+    if (active && r.w > 0.0f) {
+        setting.setNormalized((in.mouseX() - r.x) / r.w);
+    }
+
+    const float t = setting.normalized();
+    gfx.fillRoundedRect(r, r.h * 0.5f, kTrack);
+    gfx.fillRoundedRect(Rect{ r.x, r.y, r.w * t, r.h }, r.h * 0.5f, kAccent);
+
+    const float knob = 14.0f;
+    gfx.fillRoundedRect(
+        Rect{ r.x + r.w * t - knob * 0.5f, r.y + r.h * 0.5f - knob * 0.5f, knob, knob },
+        knob * 0.5f,
+        (active || hovered(grab)) ? Color::rgba(0xFFFFFFFF) : Color::rgba(0xFFD8DCE4));
+
+    return active;
+}
+
+bool Menu::widgetKeybind(const Rect& r, Module& module) {
+    auto& gfx = Renderer::get();
+    auto& in  = Input::get();
+
+    const bool capturing = (m_capturingModule == &module);
+
+    gfx.fillRoundedRect(r, 4.0f, capturing ? kAccent.withAlpha(0.25f) : kTrack);
+    if (hovered(r) || capturing) {
+        gfx.strokeRoundedRect(r, 4.0f, kAccent, 1.0f);
+    }
+
+    gfx.drawText(capturing ? "Press a key..." : keyName(module.keybind()),
+                 r, capturing ? kAccent : kText, 11.5f, TextAlign::Center);
+
+    if (clicked(r)) {
+        m_capturingModule = capturing ? nullptr : &module;
+        in.takeKey();   // discard the click-frame key so it can't bind instantly
+        return false;
+    }
+
+    if (capturing) {
+        if (const int vk = in.takeKey()) {
+            // Escape cancels rather than binding — otherwise there is no way to
+            // back out of a capture without binding something.
+            if (vk != VK_ESCAPE) {
+                module.setKeybind(vk);
+                LOG_INFO("{} bound to {}", module.name(), keyName(vk));
+            }
+            m_capturingModule = nullptr;
+            return vk != VK_ESCAPE;
+        }
+    }
+    return false;
+}
+
+} // namespace glacier::ui

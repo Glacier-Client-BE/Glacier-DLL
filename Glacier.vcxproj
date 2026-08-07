@@ -83,6 +83,9 @@
     <ClCompile Include="src\sdk\GameSDK.cpp" />
     <ClCompile Include="src\module\ModuleManager.cpp" />
     <ClCompile Include="src\module\modules\Fullbright.cpp" />
+    <ClCompile Include="src\module\modules\Watermark.cpp" />
+    <ClCompile Include="src\ui\Renderer.cpp" />
+    <ClCompile Include="src\ui\Menu.cpp" />
   </ItemGroup>
 
   <ItemGroup>
@@ -94,9 +97,14 @@
     <ClInclude Include="src\hook\D3DHook.h" />
     <ClInclude Include="src\sdk\GameSDK.h" />
     <ClInclude Include="src\module\Module.h" />
+    <ClInclude Include="src\module\HudModule.h" />
     <ClInclude Include="src\module\ModuleRegistry.h" />
     <ClInclude Include="src\module\ModuleManager.h" />
     <ClInclude Include="src\module\Setting.h" />
+    <ClInclude Include="src\core\EventBus.h" />
+    <ClInclude Include="src\ui\Renderer.h" />
+    <ClInclude Include="src\ui\Menu.h" />
+    <ClInclude Include="src\ui\Input.h" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -1,10 +1,16 @@
 #include "Glacier.h"
 
+#include "core/EventBus.h"
 #include "hook/D3DHook.h"
 #include "hook/HookManager.h"
 #include "module/ModuleManager.h"
 #include "sdk/GameSDK.h"
+#include "ui/Input.h"
+#include "ui/Menu.h"
+#include "ui/Renderer.h"
 #include "util/Logger.h"
+
+#include <windowsx.h>
 
 namespace glacier {
 
@@ -37,31 +43,48 @@ void Glacier::start(HMODULE self) {
         return;
     }
 
-    // SDK hooks (ClientInstance capture + gamma override) need the engine live,
-    // so they install here rather than inside resolve().
     sdk::GameSDK::get().installHooks();
 
+    // 4. Renderer + present wiring. The overlay owns a private D3D device, so
+    //    it is created before the first frame arrives rather than lazily.
+    auto& renderer = ui::Renderer::get();
+    if (!renderer.initialize()) {
+        LOG_WARN("overlay renderer unavailable — client runs headless (keybinds only)");
+    }
+
     auto& d3d = D3DHook::get();
-    d3d.onPresent([](IDXGISwapChain*, ID3D11Device*, ID3D11DeviceContext*) {
+    d3d.onPresent([](IDXGISwapChain* sc, ID3D11Device* dev, ID3D11DeviceContext* ctx) {
+        auto& gfx = ui::Renderer::get();
+        if (!gfx.beginFrame(sc, dev, ctx)) return;
+
+        RenderEvent ev{ gfx.width(), gfx.height() };
+        EventBus::get().publish(ev);
+
         ModuleManager::get().renderAll();
+        ui::Menu::get().render();
+
+        gfx.endFrame();
+    });
+    d3d.onResize([](IDXGISwapChain*, UINT w, UINT h) {
+        ui::Renderer::get().resize(w, h);
     });
 
     // Not fatal: without the render hook the client still ticks and keybinds
-    // still work; only per-frame drawing is lost (nothing draws yet in Phase 1).
+    // still work; only per-frame drawing is lost.
     if (!d3d.initialize()) {
         LOG_WARN("D3D hook init failed — modules will tick but nothing can draw");
     }
 
-    // 4. Capture window input for module keybinds.
+    // 5. Capture window input for the menu and module keybinds.
     if (HWND hwnd = d3d.window()) {
         installWndProc(hwnd);
     } else {
-        LOG_WARN("no game window — keybinds unavailable");
+        LOG_WARN("no game window — menu and keybinds unavailable");
     }
 
-    LOG_INFO("Glacier ready — B toggles Fullbright, END unloads");
+    LOG_INFO("Glacier ready — INSERT opens the menu, END unloads");
 
-    // 5. Logic loop: module ticks + unload watch.
+    // 6. Logic loop: module ticks + unload watch.
     bool warnedNoFrames = false;
     int  elapsedMs = 0;
 
@@ -70,7 +93,10 @@ void Glacier::start(HMODULE self) {
             requestShutdown();
             break;
         }
+
         ModuleManager::get().tickAll();
+        EventBus::get().publish<TickEvent>();
+
         Sleep(10);
         elapsedMs += 10;
 
@@ -85,14 +111,17 @@ void Glacier::start(HMODULE self) {
         }
     }
 
-    // Teardown, strict reverse order: stop receiving input, stop receiving
-    // frames, remove every hook, then destroy the modules those hooks could
-    // have called into. Getting this order wrong is how a client crashes the
-    // game on unload.
+    // Teardown, strict reverse order: stop receiving input, close the menu (so
+    // the cursor is handed back), stop receiving frames, remove every hook, then
+    // destroy the renderer and the modules those hooks could have called into.
     removeWndProc();
+    ui::Menu::get().setOpen(false);
+    setCursorReleased(false);
     D3DHook::get().shutdown();
     HookManager::get().shutdown();
+    ui::Renderer::get().shutdown();
     ModuleManager::get().shutdown();
+    EventBus::get().clear();
 
     LOG_INFO("Glacier detached");
     Logger::get().detachConsole();
@@ -118,16 +147,88 @@ void Glacier::removeWndProc() {
     }
 }
 
+void Glacier::setCursorReleased(bool released) {
+    if (released) {
+        ClipCursor(nullptr);
+        while (ShowCursor(TRUE) < 0) {}
+    } else {
+        while (ShowCursor(FALSE) >= 0) {}
+    }
+}
+
+bool Glacier::isGameInputMessage(UINT msg) {
+    switch (msg) {
+        case WM_MOUSEMOVE:
+        case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
+        case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK:
+        case WM_MBUTTONDOWN: case WM_MBUTTONUP: case WM_MBUTTONDBLCLK:
+        case WM_XBUTTONDOWN: case WM_XBUTTONUP:
+        case WM_MOUSEWHEEL:  case WM_MOUSEHWHEEL:
+        case WM_KEYDOWN:     case WM_KEYUP:
+        case WM_SYSKEYDOWN:  case WM_SYSKEYUP:
+        case WM_CHAR:        case WM_INPUT:
+            return true;
+        default:
+            return false;
+    }
+}
+
 LRESULT CALLBACK Glacier::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     auto& self = Glacier::get();
+    auto& menu = ui::Menu::get();
+    auto& in   = ui::Input::get();
 
     // Bit 30 of lParam is the "was already down" flag — ignoring it means a held
     // key would toggle the module every repeat.
-    if (msg == WM_KEYDOWN && !(lParam & (1 << 30))) {
-        ModuleManager::get().handleKey(static_cast<int>(wParam));
+    const bool freshKey = (msg == WM_KEYDOWN) && !(lParam & (1 << 30));
+
+    if (freshKey) {
+        const int vk = static_cast<int>(wParam);
+
+        // Menu key first, and never while a keybind widget is capturing —
+        // otherwise the menu key can't be bound to anything.
+        if (vk == self.menuKey() && !menu.capturingKey()) {
+            menu.toggle();
+            setCursorReleased(menu.open());
+            return 0;
+        }
+
+        if (menu.open()) {
+            // Feed the menu (keybind capture) instead of toggling modules, so
+            // rebinding never fires the module being rebound.
+            in.onKeyDown(vk);
+        } else {
+            ModuleManager::get().handleKey(vk);
+        }
     }
 
-    if (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN) {
+    if (menu.open()) {
+        switch (msg) {
+            case WM_MOUSEMOVE:
+                in.onMouseMove(static_cast<float>(GET_X_LPARAM(lParam)),
+                               static_cast<float>(GET_Y_LPARAM(lParam)));
+                break;
+            case WM_LBUTTONDOWN: in.onMouseDown(false); break;
+            case WM_LBUTTONUP:   in.onMouseUp(false);   break;
+            case WM_RBUTTONDOWN: in.onMouseDown(true);  break;
+            case WM_RBUTTONUP:   in.onMouseUp(true);    break;
+            case WM_MOUSEWHEEL:
+                in.onScroll(static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA);
+                break;
+            case WM_SETCURSOR:
+                SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+                return TRUE;
+            default:
+                break;
+        }
+
+        // The game is "paused" behind the menu: every remaining game-input
+        // message is swallowed so the player can't move, look, or attack while
+        // clicking around the UI.
+        if (isGameInputMessage(msg)) {
+            return 0;
+        }
+    } else if (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN) {
         ModuleManager::get().handleClick(msg == WM_RBUTTONDOWN);
     }
 

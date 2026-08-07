@@ -4,11 +4,8 @@
 #include <Windows.h>
 
 // Top-level client object. Owns startup ordering and the matching reverse
-// teardown, plus the WndProc hook that dispatches module keybinds.
-//
-// Phase 1 has no menu: keybinds are the entire interface. The menu-open key and
-// the input-swallowing logic that goes with it arrive with the native UI in
-// Phase 2, which is why wndProc here only routes keys to ModuleManager.
+// teardown, plus the WndProc hook that feeds the menu and dispatches module
+// keybinds.
 namespace glacier {
 
 class Glacier {
@@ -28,6 +25,10 @@ public:
 
     HMODULE module() const { return m_self; }
 
+    // Menu toggle key (default INSERT).
+    int  menuKey() const { return m_menuKey; }
+    void setMenuKey(int vk) { m_menuKey = vk; }
+
 private:
     Glacier() = default;
 
@@ -35,9 +36,16 @@ private:
     void removeWndProc();
     static LRESULT CALLBACK wndProc(HWND, UINT, WPARAM, LPARAM);
 
+    // Frees and reveals the cursor while the menu is open. Input blocking
+    // itself happens in wndProc — this only handles cursor visibility, which
+    // the game would otherwise keep captured and hidden.
+    static void setCursorReleased(bool released);
+    static bool isGameInputMessage(UINT msg);
+
     HMODULE           m_self        = nullptr;
     WNDPROC           m_origWndProc = nullptr;
     HWND              m_window      = nullptr;
+    int               m_menuKey     = VK_INSERT;
     int               m_unloadKey   = VK_END;
     std::atomic<bool> m_shuttingDown = false;
 };
