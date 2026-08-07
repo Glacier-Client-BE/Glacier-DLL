@@ -32,7 +32,28 @@ Two failure shapes worth distinguishing:
   game is packed/protected. Check `moduleRange()` returned a sane base.
 - **Some unresolved** → normal post-update drift. Continue below.
 
-## 2. Get the binary and a disassembler
+## 2. Useful external references
+
+| Project | License | What it's good for | Caveat |
+|---|---|---|---|
+| [Flarial (dll-oss)](https://github.com/flarialmc/dll-oss) | AGPLv3 | Client-side AOB patterns and offsets, per-version tables | Already the source of Glacier's imported data |
+| [Latite](https://github.com/LatiteClient/Latite) | GPLv3 | Client architecture, some overlapping signatures | Same |
+| [LeviLamina](https://github.com/liteldev/levilamina) | LGPL-3.0 | Extensive **named** class/struct/method headers for Bedrock, generated from symbol data — often the fastest way to learn a struct's real field layout and a function's true signature | Targets **Bedrock Dedicated Server**, not the client |
+
+The LeviLamina caveat matters. BDS and the client are built from a shared
+codebase, so shared engine types (`Actor`, `Level`, `ItemStack`, `Player`)
+usually match, and its headers are excellent for confirming what a field *is*.
+But client-only types (`ClientInstance`, `MinecraftGame`, `Options`,
+`LevelRenderer`, anything render- or input-related) do not exist in BDS at all,
+and **field offsets can still differ** even for shared types because the two
+binaries are compiled with different feature sets. Treat it as a source of
+names and shapes to confirm against the client binary — never as a source of
+offsets to paste in.
+
+Note also that BDS ships with a symbol/PDB story the client does not, which is
+precisely why the names are available there and not here.
+
+## 3. Get the binary and a disassembler
 
 `Minecraft.Windows.exe` lives under
 `C:\Program Files\WindowsApps\Microsoft.MinecraftUWP_*\`. The directory is ACL'd;
@@ -41,7 +62,7 @@ copy the exe out rather than fighting the permissions.
 Use IDA or Ghidra. Give it time to finish auto-analysis — the binary is large
 (~100MB) and partial analysis produces misleading cross-references.
 
-## 3. Locate the function
+## 4. Locate the function
 
 Ordered by how well they survive updates:
 
@@ -57,7 +78,7 @@ Ordered by how well they survive updates:
    likely to have changed (displacements, immediates) with wildcards, and see
    what it matches now. Fastest when the drift is small.
 
-## 4. Build the pattern
+## 5. Build the pattern
 
 Copy the first 15–30 bytes of the function prologue and wildcard every byte that
 could legitimately change:
@@ -83,7 +104,7 @@ committing.
 Rule of thumb: a pattern under ~10 concrete (non-wildcard) bytes is almost
 certainly not unique.
 
-## 5. Offsets
+## 6. Offsets
 
 Struct offsets move more often than code. Derive them from the instruction that
 touches the field:
@@ -96,7 +117,7 @@ Sanity-check the result at runtime before trusting it — a wrong offset reads
 adjacent memory and produces plausible-looking garbage rather than an obvious
 failure.
 
-## 6. Update and record
+## 7. Update and record
 
 1. Edit **only** [`src/memory/Signatures.cpp`](../src/memory/Signatures.cpp).
    Never inline a pattern or offset elsewhere — the whole containment argument

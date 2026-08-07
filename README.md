@@ -26,10 +26,23 @@ module addition is expected to respect this boundary.
 
 ## Status
 
-This is a from-scratch rebuild in progress. See the phased roadmap in this
-repository's plan history for the current milestone — early phases focus on
-the hooking/signature-scanning core and a single proven end-to-end module
-(Fullbright) before the wider module catalog is ported back.
+Rebuild in progress.
+
+| Phase | Scope | State |
+|---|---|---|
+| 0 | Project scaffold + CI | ✅ done |
+| 1 | Signature scanning, hooks, minimal SDK, Fullbright | ✅ compiles |
+| 2 | EventBus, HudModule, native Direct2D menu | ✅ compiles |
+| 3 | Visual/HUD/QoL module catalog + the offsets they need | next |
+| 4 | Theming, animation, release packaging | — |
+
+**"Compiles" is not "works."** CI proves the client builds; it cannot prove the
+imported signatures match your game build, or that the overlay composites
+correctly on your GPU. Both need someone to inject the DLL on Windows. See
+[docs/signatures.md](docs/signatures.md) for what has actually been confirmed
+against a running game — currently nothing.
+
+Controls: **INSERT** opens the menu, **END** unloads the client.
 
 ## Architecture
 
@@ -41,12 +54,38 @@ Minecraft.Windows.exe
         │
         ├─ sdk::GameSDK        resolve game pointers from byte signatures
         ├─ ModuleManager       self-registering modules ("features")
+        ├─ EventBus            typed pub/sub; hooks publish, modules subscribe
         ├─ HookManager         MinHook wrapper (tracked install/remove)
         ├─ D3DHook             IDXGISwapChain::Present / ResizeBuffers
-        │       └─ each Present ─► ModuleManager::renderAll()
-        │                      ─► native menu render (Direct2D/DirectWrite)
-        └─ WndProc hook        input → overlay + module keybinds
+        │       └─ each Present ─► ui::Renderer::beginFrame()
+        │                      ─► ModuleManager::renderAll()   (HUD widgets)
+        │                      ─► ui::Menu::render()
+        │                      ─► ui::Renderer::endFrame()     (composite)
+        └─ WndProc hook        input → ui::Input → menu + module keybinds
 ```
+
+### How the overlay reaches the screen
+
+```
+ Glacier's private D3D11 device          the game's device
+ (created with BGRA support)
+        │                                        │
+        ▼                                        │
+   Direct2D / DirectWrite                        │
+        │  draws the UI                          │
+        ▼                                        │
+   shared B8G8R8A8 texture ──[keyed mutex]──► fullscreen triangle
+                                                 │  premultiplied alpha
+                                                 ▼
+                                            game back buffer
+```
+
+Glacier does **not** bind Direct2D to the game's back buffer. D2D only accepts
+a BGRA surface and requires `D3D11_CREATE_DEVICE_BGRA_SUPPORT` on the device
+that created the swap chain — neither is under our control, and Bedrock's back
+buffer is commonly RGBA, so that approach can simply refuse to start. Owning a
+private device and compositing costs one texture copy per frame and works
+regardless of the game's format or device flags.
 
 ### Why these choices
 
