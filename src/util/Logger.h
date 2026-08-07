@@ -27,6 +27,23 @@ public:
         SetConsoleTitleW(L"Glacier // debug");
         freopen_s(reinterpret_cast<FILE**>(stdout), "CONOUT$", "w", stdout);
         freopen_s(reinterpret_cast<FILE**>(stderr), "CONOUT$", "w", stderr);
+
+        // The console defaults to the system OEM codepage, which mangles the
+        // UTF-8 our log strings are encoded in — em dashes arrive as "ÔÇö".
+        SetConsoleOutputCP(CP_UTF8);
+
+        // ANSI colour codes are inert unless virtual-terminal processing is
+        // turned on; without this the escapes print literally as "<-[36m".
+        // Not available on very old Windows, so failure just means no colour.
+        if (const HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+            out && out != INVALID_HANDLE_VALUE) {
+            DWORD mode = 0;
+            if (GetConsoleMode(out, &mode)) {
+                m_color = SetConsoleMode(
+                    out, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
+            }
+        }
+
         m_console = true;
     }
 
@@ -77,6 +94,7 @@ private:
 
     std::mutex m_mutex;
     bool m_console = false;
+    bool m_color   = false;
 };
 
 } // namespace glacier

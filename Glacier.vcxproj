@@ -125,6 +125,7 @@
     <ClInclude Include="src\ui\Renderer.h" />
     <ClInclude Include="src\ui\Menu.h" />
     <ClInclude Include="src\ui\Input.h" />
+    <ClInclude Include="src\ui\KeyNames.h" />
     <ClInclude Include="src\ui\HudEditor.h" />
     <ClInclude Include="src\util\FrameStats.h" />
   </ItemGroup>

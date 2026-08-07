@@ -1,5 +1,6 @@
 #include "Config.h"
 
+#include "../Glacier.h"
 #include "../module/Module.h"
 #include "../module/ModuleManager.h"
 #include "../util/Logger.h"
@@ -119,6 +120,24 @@ void applyKey(Module& module, const std::string& key, const std::string& value) 
     }
 }
 
+// Client-level settings live in their own section rather than on a module.
+// The menu keys in particular MUST be settable here: if a user's keyboard or
+// keybinds make both defaults unusable, the menu can't be opened to fix the
+// menu key from inside the menu.
+constexpr const char* kClientSection = "Glacier";
+
+void applyClientKey(const std::string& key, const std::string& value) {
+    int vk = 0;
+    if (!parseInt(value, vk)) {
+        LOG_WARN("config: bad value for [Glacier] {} = '{}'", key, value);
+        return;
+    }
+    auto& client = Glacier::get();
+    if (key == "menuKey")         client.setMenuKey(vk);
+    else if (key == "menuKeyAlt") client.setMenuKeyAlt(vk);
+    else if (key == "unloadKey")  client.setUnloadKey(vk);
+}
+
 } // namespace
 
 std::string Config::directory() {
@@ -153,6 +172,7 @@ bool Config::load() {
 
     auto& modules = ModuleManager::get();
     Module* current = nullptr;
+    bool inClientSection = false;
     std::string line;
     int applied = 0;
     int unknownSections = 0;
@@ -163,17 +183,26 @@ bool Config::load() {
 
         if (trimmed.front() == '[' && trimmed.back() == ']') {
             const std::string name = trim(std::string_view{ trimmed }.substr(1, trimmed.size() - 2));
-            current = modules.find(name);
-            if (!current) ++unknownSections;
+            inClientSection = (name == kClientSection);
+            current = inClientSection ? nullptr : modules.find(name);
+            if (!current && !inClientSection) ++unknownSections;
             continue;
         }
 
         const auto eq = trimmed.find('=');
         if (eq == std::string::npos) continue;
-        if (!current) continue;   // key outside any section
 
-        applyKey(*current, trim(std::string_view{ trimmed }.substr(0, eq)),
-                 trim(std::string_view{ trimmed }.substr(eq + 1)));
+        const std::string key   = trim(std::string_view{ trimmed }.substr(0, eq));
+        const std::string value = trim(std::string_view{ trimmed }.substr(eq + 1));
+
+        if (inClientSection) {
+            applyClientKey(key, value);
+            ++applied;
+            continue;
+        }
+        if (!current) continue;   // key outside any known section
+
+        applyKey(*current, key, value);
         ++applied;
     }
 

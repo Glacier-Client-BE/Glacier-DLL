@@ -12,7 +12,8 @@ namespace glacier {
 class Clock final : public HudModule {
 public:
     Clock()
-        : HudModule("Clock", "Shows the real time and session length", 0,
+        : HudModule("Clock", "Shows the real time and session length",
+                    Category::Misc, 0,
                     0.01f, 0.29f, 0xFFFFFFFF) {
         addSetting(Setting{ "seconds", "Show seconds", false });
         addSetting(Setting{ "24h", "24-hour clock", true });

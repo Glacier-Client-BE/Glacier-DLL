@@ -15,7 +15,8 @@ namespace glacier {
 class PingDisplay final : public HudModule {
 public:
     PingDisplay()
-        : HudModule("Ping", "Shows your connection latency", 0,
+        : HudModule("Ping", "Shows your connection latency",
+                    Category::Misc, 0,
                     0.01f, 0.17f, 0xFFFFFFFF) {
         addSetting(Setting{ "label", "Show \"ms\" unit", true });
         addSetting(Setting{ "colorcode", "Color by latency", true });

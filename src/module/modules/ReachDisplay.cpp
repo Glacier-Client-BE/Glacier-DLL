@@ -16,7 +16,8 @@ namespace glacier {
 class ReachDisplay final : public HudModule {
 public:
     ReachDisplay()
-        : HudModule("Reach Display", "Shows the distance of your last hit", 0,
+        : HudModule("Reach Display", "Shows the distance of your last hit",
+                    Category::Combat, 0,
                     0.01f, 0.25f, 0xFFFFFFFF) {
         addSetting(Setting{ "hold", "Seconds to display", 3.0f, 0.5f, 15.0f, 0.5f });
         addSetting(Setting{ "fade", "Fade out", true });

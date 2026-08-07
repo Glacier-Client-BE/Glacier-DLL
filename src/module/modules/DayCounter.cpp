@@ -16,7 +16,8 @@ namespace glacier {
 class DayCounter final : public HudModule {
 public:
     DayCounter()
-        : HudModule("Day Counter", "Shows the in-world day and time", 0,
+        : HudModule("Day Counter", "Shows the in-world day and time",
+                    Category::World, 0,
                     0.01f, 0.21f, 0xFFFFFFFF) {
         addSetting(Setting{ "clock", "Show time of day", true });
         addSetting(Setting{ "phase", "Show day/night phase", false });

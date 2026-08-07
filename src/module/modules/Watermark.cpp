@@ -11,7 +11,8 @@ namespace glacier {
 class Watermark final : public HudModule {
 public:
     Watermark()
-        : HudModule("Watermark", "Draws the Glacier logo on screen", 0,
+        : HudModule("Watermark", "Draws the Glacier logo on screen",
+                    Category::Visual, 0,
                     0.01f, 0.01f, 0xFF4C9AFF) {
         addSetting(Setting{ "showfps", "Show FPS", true });
     }

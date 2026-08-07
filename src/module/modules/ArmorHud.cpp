@@ -18,7 +18,8 @@ namespace glacier {
 class ArmorHud final : public HudModule {
 public:
     ArmorHud()
-        : HudModule("Armor HUD", "Shows equipped armor and durability", 0,
+        : HudModule("Armor HUD", "Shows equipped armor and durability",
+                    Category::Player, 0,
                     0.42f, 0.80f, 0xFFFFFFFF) {
         addSetting(Setting{ "slot", "Slot size", 30.0f, 18.0f, 56.0f, 1.0f });
         addSetting(Setting{ "gap", "Spacing", 4.0f, 0.0f, 14.0f, 1.0f });

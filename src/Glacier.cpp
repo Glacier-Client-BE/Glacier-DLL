@@ -7,6 +7,7 @@
 #include "module/ModuleManager.h"
 #include "sdk/GameSDK.h"
 #include "ui/Input.h"
+#include "ui/KeyNames.h"
 #include "ui/Menu.h"
 #include "ui/Renderer.h"
 #include "util/FrameStats.h"
@@ -93,7 +94,13 @@ void Glacier::start(HMODULE self) {
         LOG_WARN("no game window — menu and keybinds unavailable");
     }
 
-    LOG_INFO("Glacier ready — INSERT opens the menu, END unloads");
+    // Name the actual keys rather than hardcoding them into the string: they
+    // are configurable, and a wrong hint is worse than none when the whole
+    // problem is "which key opens this".
+    LOG_INFO("Glacier ready — {} or {} opens the menu, {} unloads (change these "
+             "under [Glacier] in {})",
+             ui::keyDisplayName(menuKey()), ui::keyDisplayName(menuKeyAlt()),
+             ui::keyDisplayName(m_unloadKey), Config::path());
 
     // 6. Logic loop: module ticks + unload watch.
     bool warnedNoFrames = false;
@@ -206,7 +213,7 @@ LRESULT CALLBACK Glacier::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
         // Menu key first, and never while a keybind widget is capturing —
         // otherwise the menu key can't be bound to anything.
-        if (vk == self.menuKey() && !menu.capturingKey()) {
+        if (self.isMenuKey(vk) && !menu.capturingKey()) {
             menu.toggle();
             setCursorReleased(menu.open());
             return 0;

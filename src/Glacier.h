@@ -25,9 +25,22 @@ public:
 
     HMODULE module() const { return m_self; }
 
-    // Menu toggle key (default INSERT).
+    // Menu toggle. Two keys are accepted because there is a bootstrapping
+    // problem here: if you cannot open the menu, you cannot rebind the key that
+    // opens it. G ("Glacier") and M ("mod menu") are both unbound in vanilla
+    // Bedrock, so neither steals a gameplay action, and every keyboard has
+    // them — unlike INSERT, which compact and laptop layouts often omit.
+    // Both are overridable from the config file.
     int  menuKey() const { return m_menuKey; }
+    int  menuKeyAlt() const { return m_menuKeyAlt; }
     void setMenuKey(int vk) { m_menuKey = vk; }
+    void setMenuKeyAlt(int vk) { m_menuKeyAlt = vk; }
+    bool isMenuKey(int vk) const {
+        return vk != 0 && (vk == m_menuKey || vk == m_menuKeyAlt);
+    }
+
+    int  unloadKey() const { return m_unloadKey; }
+    void setUnloadKey(int vk) { m_unloadKey = vk; }
 
 private:
     Glacier() = default;
@@ -45,7 +58,8 @@ private:
     HMODULE           m_self        = nullptr;
     WNDPROC           m_origWndProc = nullptr;
     HWND              m_window      = nullptr;
-    int               m_menuKey     = VK_INSERT;
+    int               m_menuKey     = 'G';
+    int               m_menuKeyAlt  = 'M';
     int               m_unloadKey   = VK_END;
     std::atomic<bool> m_shuttingDown = false;
 };

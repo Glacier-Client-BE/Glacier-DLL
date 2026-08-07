@@ -16,10 +16,15 @@ namespace glacier {
 
 class HudModule : public Module {
 public:
-    HudModule(std::string name, std::string description, int keybind = 0,
+    // Category is a parameter, not a constant: a HUD widget is not inherently
+    // "Visual" — a reach readout is a combat tool and a keystroke display is a
+    // movement one. Hardcoding it piles every widget into one menu tab and
+    // leaves the rest empty.
+    HudModule(std::string name, std::string description, Category category,
+              int keybind = 0,
               float defaultX = 0.02f, float defaultY = 0.02f,
               std::uint32_t defaultColor = 0xFFFFFFFF)
-        : Module(std::move(name), std::move(description), Category::Visual, keybind) {
+        : Module(std::move(name), std::move(description), category, keybind) {
         addSetting(Setting{ "hud.x", "X", defaultX, 0.0f, 1.0f, 0.001f });
         addSetting(Setting{ "hud.y", "Y", defaultY, 0.0f, 1.0f, 0.001f });
         addSetting(Setting{ "hud.scale", "Scale", 1.0f, 0.5f, 3.0f, 0.05f });

@@ -11,7 +11,8 @@ namespace glacier {
 class FpsCounter final : public HudModule {
 public:
     FpsCounter()
-        : HudModule("FPS Counter", "Shows the current frame rate", 0,
+        : HudModule("FPS Counter", "Shows the current frame rate",
+                    Category::Misc, 0,
                     0.01f, 0.05f, 0xFFFFFFFF) {
         addSetting(Setting{ "label", "Show \"FPS\" label", true });
         addSetting(Setting{ "colorcode", "Color by performance", false });

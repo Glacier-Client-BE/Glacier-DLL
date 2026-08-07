@@ -17,7 +17,8 @@ namespace glacier {
 class Coordinates final : public HudModule {
 public:
     Coordinates()
-        : HudModule("Coordinates", "Shows your position in the world", 0,
+        : HudModule("Coordinates", "Shows your position in the world",
+                    Category::Player, 0,
                     0.01f, 0.13f, 0xFFFFFFFF) {
         addSetting(Setting{ "decimals", "Decimal places", 1, 0, 3 });
         addSetting(Setting{ "labels", "Show X/Y/Z labels", true });

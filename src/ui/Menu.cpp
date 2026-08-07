@@ -1,6 +1,7 @@
 #include "Menu.h"
 
 #include "HudEditor.h"
+#include "KeyNames.h"
 #include "Input.h"
 #include "../core/Config.h"
 #include "../module/ModuleManager.h"
@@ -34,32 +35,6 @@ constexpr std::array kCategories{
     Category::Combat, Category::Movement, Category::Visual,
     Category::Player, Category::World,    Category::Misc,
 };
-
-// Human-readable key name for the keybind widget. GetKeyNameTextW handles the
-// printable and named keys; the rest fall back to a numeric form so a bound key
-// is never displayed as blank.
-std::string keyName(int vk) {
-    if (vk == 0) return "None";
-
-    UINT scan = MapVirtualKeyW(static_cast<UINT>(vk), MAPVK_VK_TO_VSC);
-    switch (vk) {
-        case VK_LEFT: case VK_UP: case VK_RIGHT: case VK_DOWN:
-        case VK_PRIOR: case VK_NEXT: case VK_END: case VK_HOME:
-        case VK_INSERT: case VK_DELETE: case VK_DIVIDE: case VK_NUMLOCK:
-            scan |= 0x100;   // extended key
-            break;
-        default:
-            break;
-    }
-
-    wchar_t buf[64]{};
-    if (GetKeyNameTextW(static_cast<LONG>(scan) << 16, buf, 64) > 0) {
-        char out[128]{};
-        WideCharToMultiByte(CP_UTF8, 0, buf, -1, out, sizeof(out), nullptr, nullptr);
-        return out;
-    }
-    return "Key " + std::to_string(vk);
-}
 
 } // namespace
 
@@ -159,7 +134,8 @@ void Menu::drawSidebar(const Rect& area) {
     // client that forgets everything.
     r.drawText("Saves on close", Rect{ area.x + kPad, area.bottom() - 46.0f, area.w, 18.0f },
                kTextDim.withAlpha(0.55f), 10.5f);
-    r.drawText("END unloads", Rect{ area.x + kPad, area.bottom() - 30.0f, area.w, 18.0f },
+    r.drawText("G / M toggles  ·  END unloads",
+               Rect{ area.x + kPad, area.bottom() - 30.0f, area.w, 18.0f },
                kTextDim.withAlpha(0.55f), 10.5f);
 }
 
@@ -275,7 +251,7 @@ void Menu::drawSettings(Module& module, Rect& cursor, float width) {
                 // Per-setting keybinds aren't used yet; the module-level bind
                 // above covers this. Drawn as a plain value so a module that
                 // declares one isn't silently ignored.
-                r.drawText(keyName(setting.asInt()),
+                r.drawText(keyDisplayName(setting.asInt()),
                            Rect{ row.right() - 110.0f, row.y, 100.0f, row.h },
                            kText, 12.0f, TextAlign::Right);
                 break;
@@ -412,7 +388,7 @@ bool Menu::widgetKeybind(const Rect& r, Module& module) {
         gfx.strokeRoundedRect(r, 4.0f, kAccent, 1.0f);
     }
 
-    gfx.drawText(capturing ? "Press a key..." : keyName(module.keybind()),
+    gfx.drawText(capturing ? "Press a key..." : keyDisplayName(module.keybind()),
                  r, capturing ? kAccent : kText, 11.5f, TextAlign::Center);
 
     if (clicked(r)) {
@@ -427,7 +403,7 @@ bool Menu::widgetKeybind(const Rect& r, Module& module) {
             // back out of a capture without binding something.
             if (vk != VK_ESCAPE) {
                 module.setKeybind(vk);
-                LOG_INFO("{} bound to {}", module.name(), keyName(vk));
+                LOG_INFO("{} bound to {}", module.name(), keyDisplayName(vk));
             }
             m_capturingModule = nullptr;
             return vk != VK_ESCAPE;

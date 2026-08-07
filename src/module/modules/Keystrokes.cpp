@@ -19,7 +19,8 @@ namespace glacier {
 class Keystrokes final : public HudModule {
 public:
     Keystrokes()
-        : HudModule("Keystrokes", "Displays movement keys and mouse buttons", 0,
+        : HudModule("Keystrokes", "Displays movement keys and mouse buttons",
+                    Category::Movement, 0,
                     0.02f, 0.55f, 0xFFFFFFFF) {
         addSetting(Setting{ "size", "Key size", 26.0f, 16.0f, 48.0f, 1.0f });
         addSetting(Setting{ "gap", "Spacing", 3.0f, 0.0f, 12.0f, 1.0f });

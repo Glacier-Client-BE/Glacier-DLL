@@ -19,7 +19,8 @@ namespace glacier {
 class CpsCounter final : public HudModule {
 public:
     CpsCounter()
-        : HudModule("CPS Counter", "Shows clicks per second", 0,
+        : HudModule("CPS Counter", "Shows clicks per second",
+                    Category::Combat, 0,
                     0.01f, 0.09f, 0xFFFFFFFF) {
         addSetting(Setting{ "right", "Show right clicks", true });
     }
