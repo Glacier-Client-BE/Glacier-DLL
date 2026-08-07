@@ -5,6 +5,8 @@
 **Open-source internal client for Minecraft: Bedrock Edition**
 C++20 · DirectX 11 overlay · native Direct2D/DirectWrite menu
 
+**Targets Bedrock 1.26.40**
+
 </div>
 
 > ⚠️ **Educational / research project.** Glacier is provided for learning about
@@ -36,8 +38,9 @@ Rebuild in progress.
 | 3a | Signature-free HUDs: FPS, Keystrokes, CPS, Watermark + colour settings and drag-to-move | ✅ compiles |
 | 3b | Signature-backed HUDs: Coordinates, Armor HUD | ✅ compiles |
 | 4 | Config persistence — settings survive a restart | ✅ compiles |
-| 5 | Remaining catalog: Zoom, FOV, Day Counter, Ping, Reach, Hitboxes, view-bobbing, Null Movement | next |
-| 6 | Theming, animation, blur, release packaging | — |
+| 5 | Version gating + Ping, Day Counter, Reach, Clock, Module List, Null Movement | ✅ compiles |
+| 6 | Hitboxes (world→screen chain), Zoom/FOV, view-bobbing | — |
+| 7 | Theming, animation, blur, release packaging | — |
 
 **Phases 3a and 3b are split for a reason.** 3a modules touch no game memory at
 all — they read frame timings, key state, and click timestamps — so they work on
@@ -57,6 +60,19 @@ Controls: **INSERT** opens the menu, **END** unloads the client.
 Settings persist to `%APPDATA%\Glacier\config.ini`, written when the menu
 closes and on unload. It is plain sectioned key/value text, so it can be
 hand-edited or checked into a dotfiles repo.
+
+### Game version
+
+Glacier targets **Bedrock 1.26.40** and reads the attached game's real version
+from its executable at startup, logging a warning if they differ:
+
+```
+[Glacier][info] game build 1.26.40.0 (Glacier targets 1.26.40)
+```
+
+A mismatch is a warning, not a refusal — the table often still works across
+nearby builds, and refusing to run would be worse than trying. But if anything
+misbehaves, that line is the first thing to check.
 
 ## Architecture
 

@@ -1,5 +1,6 @@
 #include "SignatureManager.h"
 
+#include "GameVersion.h"
 #include "Memory.h"
 #include "../util/Logger.h"
 
@@ -9,6 +10,15 @@
 #include <thread>
 
 namespace glacier::memory {
+
+bool SignatureManager::checkAboveOrEqual(int major, int minor, int patch) {
+    const auto& v = gameVersion();
+    // Unreadable version -> assume the newest table. Seeding an old table
+    // against a new game would be the worse failure: patterns would resolve to
+    // outdated addresses instead of visibly not resolving at all.
+    if (!v.valid) return true;
+    return v.atLeast(major, minor, patch);
+}
 
 void SignatureManager::addSignature(std::string name, std::string idaPattern) {
     m_sigs[std::move(name)] = Entry{ std::move(idaPattern), 0 };
@@ -21,6 +31,23 @@ void SignatureManager::addOffset(std::string name, std::ptrdiff_t offset) {
 std::size_t SignatureManager::scanAll() {
     const ModuleRange game = moduleRange();
     m_unresolved.clear();
+
+    // Report the build up front. When something misbehaves later, this line is
+    // the first thing worth knowing, and it costs nothing.
+    const auto& version = gameVersion();
+    LOG_INFO("game build {} (Glacier targets {}.{}.{})",
+             version.toString(), kTargetMajor, kTargetMinor, kTargetPatch);
+
+    if (version.valid && !version.sameFeatureRelease(kTargetMajor, kTargetMinor, kTargetPatch)) {
+        // Not an error: the table often still works across nearby builds, and
+        // refusing to run would be worse than trying. But an unexplained
+        // failure after this point is very likely explained by this line.
+        LOG_WARN("game build {}.{}.{} differs from the targeted {}.{}.{} — "
+                 "signatures may not resolve, and offsets may read wrong data. "
+                 "See docs/reverse-engineering.md",
+                 version.major, version.minor, version.patch,
+                 kTargetMajor, kTargetMinor, kTargetPatch);
+    }
 
     if (game.base == 0 || game.size == 0) {
         LOG_ERROR("could not determine game module range — no signatures resolvable");

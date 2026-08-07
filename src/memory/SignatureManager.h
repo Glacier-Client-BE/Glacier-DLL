@@ -31,14 +31,25 @@ public:
     void addSignature(std::string name, std::string idaPattern);
     void addOffset(std::string name, std::ptrdiff_t offset);
 
-    // ── Version gating (forward-compatibility seam) ──
-    // Glacier currently targets a single game build, so this is always true. It
-    // exists so a per-version table (seed oldest-first, newer builds override)
-    // can be introduced later by teaching *this* function about the detected
-    // build — without touching a single call site in Signatures.cpp.
-    [[nodiscard]] static bool checkAboveOrEqual(int /*major*/, int /*minor*/, int /*patch*/) {
-        return true;
-    }
+    // ── Version gating ──
+    // Answers "is the attached game at least this build?" against the version
+    // read from the executable itself. Seed the table oldest-first and guard
+    // newer overrides with this, so one table serves multiple builds:
+    //
+    //     addOffset("MinecraftGame::gameRenderer", 0xD30);          // 1.21.13x
+    //     if (checkAboveOrEqual(1, 26, 0))
+    //         addOffset("MinecraftGame::gameRenderer", 0xD70);      // 1.26+
+    //
+    // Falls back to true when the version can't be read, so an unreadable
+    // version resource degrades to "assume newest" rather than silently
+    // seeding an ancient table.
+    [[nodiscard]] static bool checkAboveOrEqual(int major, int minor, int patch);
+
+    // The build this signature table was written for. Compared against the
+    // detected version at attach so a mismatch is stated, not discovered.
+    static constexpr int kTargetMajor = 1;
+    static constexpr int kTargetMinor = 26;
+    static constexpr int kTargetPatch = 40;
 
     // Resolves every registered signature against the main module. Work is split
     // across hardware_concurrency() threads: each pattern is an independent full

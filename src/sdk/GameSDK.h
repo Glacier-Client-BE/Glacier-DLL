@@ -84,6 +84,24 @@ public:
     // user why it is doing nothing instead of silently failing.
     bool gammaHookActive() const;
 
+    // ── Instrumentation caches ──
+    // Each is fed by a hook and read by exactly one HUD. All return a "no data"
+    // sentinel rather than a stale value when the hook never fired, so a
+    // missing signature shows as "--" instead of a plausible wrong number.
+
+    // Server round-trip time in ms, or -1 when unknown/stale.
+    int  ping() const;
+    void cachePing(int ms);
+
+    // Absolute world time in ticks; nullopt while unknown. Day = ticks / 24000.
+    std::optional<int> worldTime() const;
+    void cacheWorldTime(int ticks);
+
+    // Distance in blocks of the most recent melee hit, or nullopt if none has
+    // been observed. `ageMs` reports how long ago, so a HUD can fade it out.
+    std::optional<float> lastAttackDistance(std::uint64_t* ageMs = nullptr) const;
+    void recordAttack(void* gameMode, void* target);   // called by the hook
+
     // ── Containers ──
     // All return empty/invalid data rather than throwing when the player isn't
     // in a world or the offsets didn't resolve, so HUD widgets can call them
@@ -103,6 +121,15 @@ private:
 
     // Decoded once in resolve() from the getLocalPlayerIndex call site.
     int m_localPlayerVIndex = -1;
+
+    // Instrumentation caches. Written from game threads, read from the render
+    // thread — atomics rather than a mutex, since each is a single scalar and
+    // the render thread must never block behind a game thread.
+    std::atomic<int>           m_ping{ -1 };
+    std::atomic<std::uint64_t> m_pingStamp{ 0 };
+    std::atomic<int>           m_worldTime{ -1 };
+    std::atomic<float>         m_attackDistance{ -1.0f };
+    std::atomic<std::uint64_t> m_attackStamp{ 0 };
 };
 
 } // namespace glacier::sdk

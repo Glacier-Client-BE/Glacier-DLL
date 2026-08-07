@@ -10,7 +10,32 @@ reverse-engineering work in Flarial (AGPLv3) and Latite (GPLv3), not
 independently derived by this project. That is why Glacier is AGPLv3; see
 [acknowledgements.md](acknowledgements.md).
 
-**Target build:** Minecraft: Bedrock Edition 1.26.x
+**Target build:** Minecraft: Bedrock Edition **1.26.40**
+
+Declared in `SignatureManager::kTarget{Major,Minor,Patch}`. Glacier reads the
+attached game's real version from its executable version resource at startup
+and logs it, warning when it differs from the target:
+
+```
+[Glacier][info] game build 1.26.40.0 (Glacier targets 1.26.40)
+```
+
+or, on a mismatch:
+
+```
+[Glacier][warn] game build 1.26.31 differs from the targeted 1.26.40 —
+                signatures may not resolve, and offsets may read wrong data.
+```
+
+The version check uses no signature, so it still works when every pattern in
+the table has gone stale — which is exactly when it matters most.
+
+**Important caveat about 1.26.40 specifically.** These patterns were last
+*redefined upstream* for 1.21.13x and carried forward because nothing overrode
+them before 1.26; the offsets reflect the 1.26 overrides. They are believed
+correct for 1.26.40 but **have not been verified against a 1.26.40 binary by
+this project**. Nobody has run this against that build. If the log reports
+unresolved signatures, that belief was wrong, and the fix is one file.
 
 ## Status legend
 
@@ -32,6 +57,10 @@ work. Compiling is not confirmation.
 | `ClientInstance::getLocalPlayerIndex` | signature | Call site whose displacement encodes `getLocalPlayer`'s vtable index | **yes** | ⚠️ inherited |
 | `Options::getGamma` | signature | Hooked by Fullbright to return an override brightness | no | ⚠️ inherited |
 | `ItemStack::getMaxDamage` | signature | Called for durability bars | no | ⚠️ inherited |
+| `GameMode::attack` | signature | Observed (read-only) for Reach Display | no | ⚠️ inherited |
+| `RakPeer::GetAveragePing` | signature | Caches RTT for Ping display | no | ⚠️ inherited |
+| `TimeChanger` | signature | Caches world time for Day Counter | no | ⚠️ inherited |
+| `Gamemode::player` | offset `0x8` | GameMode -> owning Player, for Reach | no | ⚠️ inherited |
 | `Actor::position` | offset `0x44` | `Vec3` of an entity's feet — Coordinates | no | ⚠️ inherited |
 | `Actor::armorContainer` | offset `0x1670` | Armor HUD | no | ⚠️ inherited |
 | `Player::supplies` | offset `0x9B8` | `PlayerInventory*` — held item | no | ⚠️ inherited |
@@ -45,10 +74,13 @@ work. Compiling is not confirmation.
 
 | Module | Needs | If it breaks |
 |---|---|---|
-| Watermark, FPS Counter, Keystrokes, CPS Counter | **nothing** | Can only break if the overlay itself is broken |
+| Watermark, FPS Counter, Keystrokes, CPS Counter, Clock, Module List, Null Movement | **nothing** | Can only break if the overlay itself is broken |
 | Fullbright | `Options::getGamma` | Toggling does nothing; logs a warning on enable |
 | Coordinates | `ClientInstance::*`, `Actor::position` | Shows `XYZ --`, or numbers that don't track movement |
 | Armor HUD | the container + `ItemStack` offsets | Empty slots while armoured, or nonsense counts |
+| Ping | `RakPeer::GetAveragePing` | Shows `--` |
+| Day Counter | `TimeChanger` | Shows `Day --` |
+| Reach Display | `GameMode::attack`, `Gamemode::player` | Shows `Reach --` after a hit |
 
 Coordinates is the cheapest end-to-end check of the SDK: if it tracks your
 movement, the whole signature → hook → `ClientInstance` → `LocalPlayer` chain
@@ -66,9 +98,6 @@ actually exists.
 
 | Name | Kind | Needed for | Phase |
 |---|---|---|---|
-| `GameMode::attack` | signature | Hit Ping, Reach Display | 5 |
-| `RakPeer::GetAveragePing` | signature | Ping display | 5 |
-| `TimeChanger` | signature | Day Counter | 5 |
 | `Level::getRuntimeActorList` | signature | Hitboxes (entity enumeration) | 5 |
 | `BobHurt` | signature | Java View Bobbing | 5 |
 | `MinimalViewBobbing` | signature | Minimal View Bobbing (NOP patch site) | 5 |

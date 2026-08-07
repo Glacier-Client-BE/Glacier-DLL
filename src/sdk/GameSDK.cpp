@@ -4,6 +4,9 @@
 #include "../memory/SignatureManager.h"
 #include "../util/Logger.h"
 
+#include <cmath>
+#include <Windows.h>
+
 namespace glacier::sdk {
 
 using memory::SignatureManager;
@@ -40,6 +43,44 @@ float __fastcall hkGetGamma(void* self) {
 // ItemStack::getMaxDamage(ItemStack*) -> int. Called directly, not hooked.
 using GetMaxDamageFn = int(__fastcall*)(void*);
 GetMaxDamageFn p_getMaxDamage = nullptr;
+
+// ── GameMode::attack hook (Reach display) ──
+// Strictly observational: record, then call through unmodified. Glacier does
+// not alter attacks — see the scope boundary in README.
+using AttackFn = void(__fastcall*)(void*, void*, bool);
+AttackFn o_attack = nullptr;
+
+void __fastcall hkAttack(void* gameMode, void* target, bool a3) {
+    GameSDK::get().recordAttack(gameMode, target);
+    o_attack(gameMode, target, a3);
+}
+
+// ── RakPeer::GetAveragePing hook ──
+// Caches whatever the game asks for. We never call this ourselves: reaching
+// into RakNet off the network thread isn't safe.
+using PingFn = std::int32_t(__fastcall*)(void*, void*);
+PingFn o_getAveragePing = nullptr;
+
+std::int32_t __fastcall hkGetAveragePing(void* peer, void* addressOrGuid) {
+    const auto result = o_getAveragePing(peer, addressOrGuid);
+    if (result >= 0) {
+        GameSDK::get().cachePing(static_cast<int>(result));
+    }
+    return result;
+}
+
+// ── Time-of-day hook (Day Counter) ──
+// The game calls this helper with the raw tick count to reduce it mod 24000.
+// We only read the input, then call through.
+using TimeFn = int(__fastcall*)(void*, std::int64_t);
+TimeFn o_timeOfDay = nullptr;
+
+int __fastcall hkTimeOfDay(void* a1, std::int64_t rawTicks) {
+    if (rawTicks >= 0 && rawTicks < 0x7FFFFFFF) {
+        GameSDK::get().cacheWorldTime(static_cast<int>(rawTicks));
+    }
+    return o_timeOfDay(a1, rawTicks);
+}
 
 } // namespace
 
@@ -100,6 +141,27 @@ void GameSDK::installHooks() {
     } else {
         LOG_WARN("Options::getGamma not resolved — Fullbright will no-op");
     }
+
+    // Instrumentation hooks. Every one of these is optional and drives exactly
+    // one HUD, which displays "--" when its hook never installed.
+    if (const auto addr = sigs.sig("GameMode::attack")) {
+        hooks.create<AttackFn>("GameMode::attack",
+                               reinterpret_cast<void*>(addr), &hkAttack, &o_attack);
+    } else {
+        LOG_WARN("GameMode::attack not resolved — Reach display will show no data");
+    }
+    if (const auto addr = sigs.sig("RakPeer::GetAveragePing")) {
+        hooks.create<PingFn>("RakPeer::GetAveragePing",
+                             reinterpret_cast<void*>(addr), &hkGetAveragePing, &o_getAveragePing);
+    } else {
+        LOG_WARN("RakPeer::GetAveragePing not resolved — Ping display unavailable");
+    }
+    if (const auto addr = sigs.sig("TimeChanger")) {
+        hooks.create<TimeFn>("TimeChanger",
+                             reinterpret_cast<void*>(addr), &hkTimeOfDay, &o_timeOfDay);
+    } else {
+        LOG_WARN("TimeChanger not resolved — Day Counter will show no data");
+    }
 }
 
 ClientInstance* GameSDK::clientInstance() const {
@@ -129,6 +191,69 @@ void GameSDK::setGammaOverride(float gamma) {
 
 bool GameSDK::gammaHookActive() const {
     return o_getGamma != nullptr;
+}
+
+// ─── Instrumentation caches ──────────────────────────────────────────────────
+
+void GameSDK::cachePing(int ms) {
+    m_ping.store(ms, std::memory_order_relaxed);
+    m_pingStamp.store(GetTickCount64(), std::memory_order_relaxed);
+}
+
+int GameSDK::ping() const {
+    // The game stops querying ping in single-player and on the main menu, so an
+    // old value would sit on screen indefinitely. Expire it.
+    const auto stamp = m_pingStamp.load(std::memory_order_relaxed);
+    if (stamp == 0 || GetTickCount64() - stamp > 5000) return -1;
+    return m_ping.load(std::memory_order_relaxed);
+}
+
+void GameSDK::cacheWorldTime(int ticks) {
+    m_worldTime.store(ticks, std::memory_order_relaxed);
+}
+
+std::optional<int> GameSDK::worldTime() const {
+    const int t = m_worldTime.load(std::memory_order_relaxed);
+    if (t < 0) return std::nullopt;
+    return t;
+}
+
+void GameSDK::recordAttack(void* gameMode, void* target) {
+    if (!gameMode || !target) return;
+
+    auto& sigs = SignatureManager::get();
+    const auto posOff = sigs.offset("Actor::position");
+    const auto playerOff = sigs.offset("Gamemode::player");
+    if (posOff == 0) return;
+
+    // The attacker is the GameMode's owning player rather than localPlayer():
+    // reaching through the object we were handed avoids a virtual call on a
+    // pointer that may not be the local player at all.
+    void* attacker = memory::memberAt<void*>(gameMode, playerOff);
+    if (!attacker) return;
+
+    const Vec3 from = memory::memberAt<Vec3>(attacker, posOff);
+    const Vec3 to   = memory::memberAt<Vec3>(target, posOff);
+
+    const float dx = to.x - from.x;
+    const float dy = to.y - from.y;
+    const float dz = to.z - from.z;
+    const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+
+    // Reject implausible values: a bad offset produces huge or NaN distances,
+    // and showing "1.4e+27 blocks" is worse than showing nothing.
+    if (!std::isfinite(distance) || distance < 0.0f || distance > 64.0f) return;
+
+    m_attackDistance.store(distance, std::memory_order_relaxed);
+    m_attackStamp.store(GetTickCount64(), std::memory_order_relaxed);
+}
+
+std::optional<float> GameSDK::lastAttackDistance(std::uint64_t* ageMs) const {
+    const auto stamp = m_attackStamp.load(std::memory_order_relaxed);
+    if (stamp == 0) return std::nullopt;
+
+    if (ageMs) *ageMs = GetTickCount64() - stamp;
+    return m_attackDistance.load(std::memory_order_relaxed);
 }
 
 // ─── Containers ──────────────────────────────────────────────────────────────

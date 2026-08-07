@@ -80,6 +80,7 @@
     <ClCompile Include="src\memory\Memory.cpp" />
     <ClCompile Include="src\memory\SignatureManager.cpp" />
     <ClCompile Include="src\memory\Signatures.cpp" />
+    <ClCompile Include="src\memory\GameVersion.cpp" />
     <ClCompile Include="src\hook\D3DHook.cpp" />
     <ClCompile Include="src\sdk\GameSDK.cpp" />
     <ClCompile Include="src\module\ModuleManager.cpp" />
@@ -93,6 +94,12 @@
     <ClCompile Include="src\module\modules\CpsCounter.cpp" />
     <ClCompile Include="src\module\modules\Coordinates.cpp" />
     <ClCompile Include="src\module\modules\ArmorHud.cpp" />
+    <ClCompile Include="src\module\modules\PingDisplay.cpp" />
+    <ClCompile Include="src\module\modules\DayCounter.cpp" />
+    <ClCompile Include="src\module\modules\ReachDisplay.cpp" />
+    <ClCompile Include="src\module\modules\ModuleList.cpp" />
+    <ClCompile Include="src\module\modules\Clock.cpp" />
+    <ClCompile Include="src\module\modules\NullMovement.cpp" />
   </ItemGroup>
 
   <ItemGroup>
@@ -100,6 +107,7 @@
     <ClInclude Include="src\util\Logger.h" />
     <ClInclude Include="src\memory\Memory.h" />
     <ClInclude Include="src\memory\SignatureManager.h" />
+    <ClInclude Include="src\memory\GameVersion.h" />
     <ClInclude Include="src\hook\HookManager.h" />
     <ClInclude Include="src\hook\D3DHook.h" />
     <ClInclude Include="src\sdk\GameSDK.h" />
