@@ -260,9 +260,9 @@ bool Config::save() {
                 << "menuKey = "    << client.menuKey()    << '\n'
                 << "menuKeyAlt = " << client.menuKeyAlt() << '\n'
                 << "unloadKey = "  << client.unloadKey()  << '\n'
-                << "# Draw real item icons using the game's own renderer.\n"
-                << "# Off by default: it calls into game code located by pattern, and\n"
-                << "# an incorrect address there can crash the game on world load.\n"
+                << "# Draw real item icons using the game's own renderer. Set false if\n"
+                << "# the game ever crashes on world load — this is the only path that\n"
+                << "# calls a game function located by matching a call site.\n"
                 << "itemIcons = "
                 << (sdk::ItemRendering::get().enabled() ? "true" : "false") << "\n\n";
         }

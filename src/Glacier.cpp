@@ -85,10 +85,12 @@ void Glacier::start(HMODULE self) {
             return;
         }
 
-        // Grab/release the game's cursor here rather than where the menu was
-        // toggled: this is the game's own render thread, which is the only
-        // thread it is safe to change that state from.
-        sdk::GameSDK::get().applyPendingCursor();
+        // Reconcile the game's cursor grab against the menu, every frame, from
+        // the game's own thread — the way Latite's ScreenManager::onUpdate
+        // does. The repetition is required, not defensive: the game re-grabs
+        // the cursor by itself, so releasing once when the menu opens does not
+        // hold and the player keeps moving behind the menu.
+        sdk::GameSDK::get().applyCursorState(ui::Menu::get().open());
 
         // Sample the mouse before anything hit-tests it. Polled rather than
         // taken from WM_* messages because Bedrock consumes the mouse through
@@ -311,12 +313,15 @@ void Glacier::removeWndProc() {
 }
 
 void Glacier::setCursorReleased(bool released) {
-    // Preferred path: drive the game's own grab state, exactly as the game does
-    // when it opens one of its own screens. That both reveals the cursor and
-    // stops gameplay from consuming the mouse — swallowing window messages
-    // never did the latter, because Bedrock reads RawInput directly.
-    if (sdk::GameSDK::get().setCursorGrabbed(!released)) {
-        // If a previous open had to fall back, undo that now so the OS cursor
+    // The real work is GameSDK::applyCursorState, driven every frame from the
+    // Present hook — the game re-grabs the cursor on its own, so this could
+    // never have been a one-shot call from here.
+    //
+    // What is left is the fallback for when the cursor signatures are missing
+    // entirely: at least give the user a visible pointer to click the menu
+    // with, even though the game will keep taking movement input.
+    if (sdk::GameSDK::get().cursorControlAvailable()) {
+        // If an earlier session had to fall back, undo it now so the OS cursor
         // counter doesn't drift permanently out of balance.
         if (!released && s_cursorFallback) {
             while (ShowCursor(FALSE) >= 0) {}
@@ -325,8 +330,6 @@ void Glacier::setCursorReleased(bool released) {
         return;
     }
 
-    // Fallback: signatures missing, or there is no ClientInstance yet (main
-    // menu, loading). Make sure the user at least has a pointer to click with.
     if (released) {
         ClipCursor(nullptr);
         while (ShowCursor(TRUE) < 0) {}

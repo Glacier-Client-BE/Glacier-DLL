@@ -239,22 +239,35 @@ bool GameSDK::cursorControlAvailable() const {
     return s_grabCursor != nullptr && s_releaseCursor != nullptr;
 }
 
-bool GameSDK::setCursorGrabbed(bool grabbed) {
-    if (!cursorControlAvailable()) return false;
-    m_pendingCursor.store(grabbed ? 1 : 2, std::memory_order_relaxed);
-    return true;
+bool GameSDK::cursorGrabbed() const {
+    void* ci = clientInstance();
+    if (!ci) return false;
+
+    auto& sigs = SignatureManager::get();
+    void* mcGame = deref(ci, sigs.offset("ClientInstance::minecraftGame"));
+    if (!mcGame) return false;
+
+    return memory::memberAt<bool>(mcGame, sigs.offset("MinecraftGame::cursorGrabbed"));
 }
 
-void GameSDK::applyPendingCursor() {
-    const int pending = m_pendingCursor.exchange(0, std::memory_order_relaxed);
-    if (pending == 0 || !cursorControlAvailable()) return;
+void GameSDK::applyCursorState(bool menuOpen) {
+    if (!cursorControlAvailable()) return;
 
-    // No ClientInstance means no world, and nothing to grab or release. Dropping
-    // the request is right: entering a world starts grabbed anyway.
     void* ci = clientInstance();
-    if (!ci) return;
+    if (!ci) {
+        // No world. Don't remember a menu state across it, or re-entering one
+        // would fire a stray grab on the first frame.
+        m_menuWasOpen = false;
+        return;
+    }
 
-    (pending == 1 ? s_grabCursor : s_releaseCursor)(ci);
+    if (menuOpen) {
+        // Re-assert every frame. See the header: one call does not hold.
+        if (cursorGrabbed()) s_releaseCursor(ci);
+    } else if (m_menuWasOpen) {
+        s_grabCursor(ci);
+    }
+    m_menuWasOpen = menuOpen;
 }
 
 // ─── Instrumentation caches ──────────────────────────────────────────────────

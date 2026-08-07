@@ -111,8 +111,7 @@ bool constructContextGuarded(void* context, void* screenContext,
 
 void ItemRendering::installHooks() {
     if (!m_enabled) {
-        LOG_INFO("item icons disabled (set 'itemIcons = true' under [Glacier] in {} to try them) "
-                 "— HUDs will draw everything except item icons",
+        LOG_INFO("item icons turned off in {} — HUDs will draw everything except icons",
                  Config::path());
         return;
     }

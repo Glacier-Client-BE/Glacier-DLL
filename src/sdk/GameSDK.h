@@ -98,22 +98,23 @@ public:
     // RawInput, so swallowing window messages never stopped the player from
     // moving behind the menu. Grabbing it again restores normal play.
     //
-    // Requests a change. The call is NOT made here: it is queued and performed
-    // by applyPendingCursor() on the game's render thread.
+    // Reconciles the game's cursor state against whether Glacier's menu is
+    // open. Call once per frame from a game thread (the Present hook).
     //
-    // grabCursor/releaseCursor touch the game's input and screen state, and
-    // calling them from Glacier's logic thread while the game is midway through
-    // its own frame is asking for a race the game was never written to
-    // tolerate. Queuing costs one atomic and removes the question.
+    // This is Latite's `ScreenManager::onUpdate` shape, and the repetition is
+    // the whole point: **the game re-grabs the cursor on its own**, so calling
+    // releaseCursor() once when the menu opens does not hold — which is why the
+    // game kept accepting movement behind the menu. While the menu is open, any
+    // frame that finds the cursor grabbed releases it again.
     //
-    // Returns false if the request cannot be honoured at all (signatures
-    // missing), so the caller can fall back to hiding the cursor itself rather
-    // than leaving the user with no pointer.
-    bool setCursorGrabbed(bool grabbed);
+    // Grabbing, by contrast, happens only on the open->closed edge. Never grab
+    // just because the cursor is released: the game releases it for its own
+    // screens (pause, inventory, chat), and re-grabbing there would fight the
+    // game for control of its own UI.
+    void applyCursorState(bool menuOpen);
 
-    // Performs any queued grab/release. Called once per frame from the Present
-    // hook, which runs on the game's own render thread.
-    void applyPendingCursor();
+    // Whether the game currently has the cursor captured for gameplay.
+    bool cursorGrabbed() const;
 
     // True when both cursor signatures resolved. Independent of whether a
     // ClientInstance currently exists.
@@ -181,8 +182,9 @@ private:
     // Instrumentation caches. Written from game threads, read from the render
     // thread — atomics rather than a mutex, since each is a single scalar and
     // the render thread must never block behind a game thread.
-    // 0 = nothing queued, 1 = grab, 2 = release. See setCursorGrabbed.
-    std::atomic<int>           m_pendingCursor{ 0 };
+    // Previous menu state, so the grab fires once on close rather than every
+    // frame. Only touched from the frame thread that calls applyCursorState.
+    bool m_menuWasOpen = false;
 
     std::atomic<int>           m_ping{ -1 };
     std::atomic<std::uint64_t> m_pingStamp{ 0 };

@@ -65,15 +65,15 @@ public:
         return instance;
     }
 
-    // OFF BY DEFAULT — set `itemIcons = true` under [Glacier] in config.ini.
+    // On by default, overridable with `itemIcons = false` under [Glacier] in
+    // config.ini.
     //
-    // This path is the only part of Glacier that hands control to a game
-    // function we located by matching a *call site* rather than the function
-    // itself. If that match is wrong, calling through it faults the moment the
-    // UI first renders, which presents as "the game crashes when a world
-    // loads" and takes the whole client with it. Until someone confirms it
-    // works on a real build, the default has to be the one that cannot break a
-    // session that would otherwise be fine.
+    // It was briefly defaulted off while the world-load crash was unexplained.
+    // That crash turned out to have a separate, confirmed cause (Glacier was
+    // hooking its own debug console — see docs/HANDOFF.md), and the calls into
+    // game code here are wrapped in structured-exception guards that switch the
+    // feature off and name what failed. The config key stays as the one-line
+    // recovery if this path ever does turn out to be the unstable one.
     //
     // Must be called before installHooks() to have any effect.
     void setEnabled(bool enabled) { m_enabled = enabled; }
@@ -107,7 +107,7 @@ private:
     // what failed. Called from the render path, so it must not throw.
     void disableAfterFault(const char* what);
 
-    bool m_enabled = false;
+    bool m_enabled = true;
     bool m_available = false;
 
     // Two batches: one being filled by the overlay pass, one ready for the game

@@ -114,6 +114,10 @@ void SignatureManager::seedBedrock() {
     addOffset("Platform_GameCore::minecraftGame", 0x18);
     // map<uint8, shared_ptr<ClientInstance>>; entry 0 is the local one
     addOffset("MinecraftGame::clientInstances", 0x938);
+    // bool, from MinecraftGame::isCursorGrabbed. Read every frame while
+    // the menu is open: the game re-grabs the cursor on its own, so a
+    // single releaseCursor() call does not hold.
+    addOffset("MinecraftGame::cursorGrabbed", 0x1D8);
 
     addOffset("ClientInstance::minecraftGame", 0x1A0);
     addOffset("ClientInstance::levelRenderer", 0x1B8);

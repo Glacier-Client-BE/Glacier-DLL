@@ -179,6 +179,10 @@ OFFSETS: list[OffsetEntry] = [
                 comment="Platform_GameCore::getMinecraftGame"),
     OffsetEntry("MinecraftGame::clientInstances", "", "", literal=0x938,
                 comment="map<uint8, shared_ptr<ClientInstance>>; entry 0 is the local one"),
+    OffsetEntry("MinecraftGame::cursorGrabbed", "", "", literal=0x1D8,
+                comment="bool, from MinecraftGame::isCursorGrabbed. Read every frame while\n"
+                        "// the menu is open: the game re-grabs the cursor on its own, so a\n"
+                        "// single releaseCursor() call does not hold."),
 
     OffsetEntry("ClientInstance::minecraftGame",
                 "src/mc/common/client/game/ClientInstance.h", "minecraftGame",
