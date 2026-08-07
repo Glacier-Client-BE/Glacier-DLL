@@ -22,3 +22,8 @@
 
 # Logs
 /cache/
+
+# Stray local build artifacts / packaged test bundles
+*.zip
+/dist/
+/vcpkg_installed/

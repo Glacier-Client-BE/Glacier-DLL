@@ -73,19 +73,31 @@ Output: `build/x64/Release/Glacier.dll`.
 
 ## Acknowledgements
 
-Glacier's low-level architecture is independently written, but its design is
-informed by studying two other open-source Bedrock clients:
+Glacier's infrastructure — the pattern scanner, signature registry, hook
+manager, D3D hook, module system, and UI — is Glacier's own code. Its *design*
+is informed by studying two other open-source Bedrock clients:
 [Latite](https://github.com/LatiteClient/Latite) (GPLv3) and
-[Flarial (dll-oss)](https://github.com/flarialmc/dll-oss) (AGPLv3). Both are
-strong-copyleft licensed, while Glacier is MIT — so Glacier reimplements
-*techniques* observed in those projects (e.g. a central signature/offset
-registry keyed by name, a `Module` → `HudModule` hierarchy, kiero-style
-Present-hook vtable discovery via a throwaway device) as original code. No
-source, byte signatures, or struct offsets are copied from either project;
-Glacier's own signatures and offsets are independently reverse-engineered
-against the Minecraft Bedrock build it targets. See `docs/acknowledgements.md`
-for a per-technique breakdown as modules land.
+[Flarial (dll-oss)](https://github.com/flarialmc/dll-oss) (AGPLv3), from which
+Glacier reimplements *techniques* (a central signature/offset registry keyed by
+name, a `Module` → `HudModule` hierarchy, kiero-style Present-hook vtable
+discovery via a throwaway device) as original code.
+
+**The signature and offset data is different.** The AOB patterns and struct
+offsets in [`src/memory/Signatures.cpp`](src/memory/Signatures.cpp) are derived
+from the open reverse-engineering work in those two projects. That single file
+is why Glacier is AGPLv3 rather than permissively licensed. See
+[docs/acknowledgements.md](docs/acknowledgements.md) for the full reasoning and
+a per-technique breakdown.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+**AGPLv3** — see [LICENSE](LICENSE).
+
+This is strong copyleft: if you distribute a modified Glacier, or run it as a
+network service, you must make your corresponding source available under the
+same license. Glacier cannot be embedded in a closed-source product.
+
+The license follows from the signature data described above, not from the
+infrastructure. If the imported signatures in `src/memory/Signatures.cpp` are
+ever replaced with independently derived ones, that is the only file standing
+between Glacier and a permissive relicense.
