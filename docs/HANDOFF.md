@@ -1,0 +1,224 @@
+# Glacier DLL — session handoff
+
+Paste the "Prompt" section below into a fresh Claude Code session. Everything
+after it is reference material that session can read from the repo.
+
+---
+
+## Prompt
+
+> I'm working on Glacier DLL (`C:\Users\User\GlacierDll`), an open-source
+> internal client for Minecraft: Bedrock Edition 1.26.40, C++20 / MSBuild /
+> vcpkg, AGPLv3. Read `docs/HANDOFF.md` first — it has full context on the
+> architecture, what works, what's broken, and the diagnosis for each open bug.
+>
+> Build/verify **only** through GitHub Actions (`gh run watch`), never locally.
+> Commit directly to `master` and push; CI runs on every push to master.
+>
+> The client currently injects, resolves all signatures, and renders its overlay
+> correctly. Work through the open bugs in `docs/HANDOFF.md` § "Open bugs", in
+> the order given — bug 1 blocks testing everything else.
+>
+> Reference clients (all copyleft-compatible, we're AGPLv3): Latite (GPLv3),
+> Flarial dll-oss (AGPLv3), Selaura (GPLv3), LeviLamina (LGPL-3.0, BDS-only —
+> names and struct shapes, never offsets). Imported signature data lives only in
+> `src/memory/Signatures.cpp`, which is generated — see § "Signature sync".
+
+---
+
+## What this is
+
+Injected DLL. `dllmain` spawns a thread → `Glacier::start()` resolves
+signatures, builds modules, installs hooks, then runs a logic loop.
+
+```
+Minecraft.Windows.exe
+  └─ dllmain.cpp → CreateThread → Glacier::start()
+       ├─ memory/      pattern scanner + name-keyed signature registry
+       ├─ sdk/GameSDK  resolves game pointers by name
+       ├─ module/      self-registering modules (GLACIER_MODULE macro)
+       ├─ core/        EventBus, Config
+       ├─ hook/        MinHook wrapper + D3D11 Present/ResizeBuffers hook
+       └─ ui/          Direct2D overlay, immediate-mode menu, HUD editor
+```
+
+**Verified working in-game (1.26.40.5):** injection, version detection, all 5
+signatures resolving, all 4 SDK hooks, D3D hook on the real swapchain, config
+load/save, overlay compositing, **Coordinates**, **Day Counter**.
+
+**Controls:** `G` or `M` opens the menu, `END` unloads. Config at
+`%APPDATA%\Glacier\config.ini`.
+
+## Architecture facts that are easy to get wrong
+
+These each cost a debugging cycle already. Don't re-derive them.
+
+1. **Bedrock reads keyboard/mouse through RawInput.** `WM_KEYDOWN` and the
+   mouse messages are *not* reliably delivered to our WndProc. The menu toggle
+   therefore polls `GetAsyncKeyState` on the logic thread. **This is the root
+   cause of open bugs 1 and 2 as well.**
+
+2. **Never toggle the menu from two places.** It was previously toggled from
+   both the WndProc and the polling loop, with a shared "was down" flag.
+   `GetAsyncKeyState` sees the key before `WM_KEYDOWN` arrives, so one press
+   toggled twice and the menu appeared never to open. The polling loop is the
+   single owner; WndProc only swallows the key.
+
+3. **The overlay device must be on the game's adapter.** Keyed-mutex shared
+   textures cannot cross adapters. This machine runs Bedrock on *Intel UHD
+   Graphics*; creating our device on the default adapter silently broke all
+   compositing. `Renderer::initialize(gameDevice)` is called lazily from
+   `beginFrame` for exactly this reason.
+
+4. **`composite()` must bind the back buffer explicitly.** At Present time the
+   game has already unbound its render target. Bind with a **null DSV** so the
+   fullscreen triangle isn't depth-tested away. This was the "renders nothing
+   but logs success" bug.
+
+5. **Every early return in the frame path must leave the keyed mutex at
+   `kKeyWrite`.** Bailing after `endFrame` released it to `kKeyRead` deadlocks
+   every later frame.
+
+6. **D2D can bind an R8G8B8A8 back buffer directly.** Flarial does. Our
+   private-device compositing was justified by a belief that it couldn't — that
+   was over-cautious. Compositing works and stays, but if it ever becomes a
+   problem, drawing straight onto the back buffer is a legitimate simplification.
+
+## Open bugs
+
+### 1. Menu can't be interacted with — BLOCKS EVERYTHING ELSE
+
+The menu renders but does not respond to the mouse.
+
+**Diagnosis:** almost certainly the same RawInput problem as the keyboard.
+`ui::Input` is fed exclusively from WndProc mouse messages
+(`WM_MOUSEMOVE`, `WM_LBUTTONDOWN`, …) in `Glacier::wndProc`. If Bedrock
+consumes mouse input via RawInput, those messages never arrive, so the menu
+sees the cursor parked at (0,0) — no hover, no clicks, no drags.
+
+**Fix:** poll instead. Once per frame (in the Present callback, before
+`Menu::render`), when the menu is open:
+
+```cpp
+POINT p; GetCursorPos(&p); ScreenToClient(hwnd, &p);
+Input::get().onMouseMove((float)p.x, (float)p.y);
+// edge-detect these rather than trusting WM_*BUTTONDOWN:
+const bool lDown = GetAsyncKeyState(VK_LBUTTON) & 0x8000;
+```
+
+Keep the existing WndProc path as a supplement (harmless if messages do
+arrive) but do not let both produce click *edges* — same double-fire trap as
+bug 2 in the history above. Have exactly one place compute edges.
+
+Verify: hovering a category should highlight it.
+
+### 2. HUD modules can't be dragged
+
+Same root cause as bug 1 — `HudEditor::update` hit-tests against
+`Input::mouseX/Y`. Fixing bug 1 very likely fixes this. Re-test before
+investigating separately.
+
+### 3. Game isn't paused while the menu is open
+
+Currently `wndProc` swallows game input messages. That does nothing when the
+game reads RawInput directly, which is why you can still move and look.
+
+**Fix — use the game's own cursor state, like Latite and Flarial do.** Latite
+already publishes both signatures in `src/mc/Addresses.h`:
+
+- `ClientInstance::grabCursor`
+- `ClientInstance::releaseCursor`
+
+Call `releaseCursor()` on menu open and `grabCursor()` on close. Both are
+`void(__fastcall*)(ClientInstance*)`. Add them to the mapping table in
+`tools/sync_signatures.py` (`SIGNATURES` list) and regenerate — do **not**
+hand-edit `Signatures.cpp`.
+
+This also fixes the cursor: the current `ShowCursor`/`ClipCursor` juggling in
+`Glacier::setCursorReleased` is a workaround that should be removed once the
+game's own grab state is driven properly.
+
+### 4. Fullbright does nothing
+
+The hook is installed and fires — the bug is the value.
+
+**Diagnosis:** our gamma setting is a 0.0–1.0 slider defaulting to **1.0**,
+which is the game's *normal* brightness. Latite's Fullbright uses a slider
+range of **0–25**:
+
+```cpp
+addSliderSetting("gamma", ..., FloatValue(0.f), FloatValue(25.f), FloatValue(1.f));
+```
+
+**Fix:** in `src/module/modules/Fullbright.cpp`, change the setting to
+`Setting{ "gamma", "Gamma", 15.0f, 0.0f, 25.0f, 0.5f }`. Note
+`GameSDK::setGammaOverride` treats negative as "disabled", so the 0..25 range
+is fine as-is.
+
+### 5. No item renderers (Armor HUD shows no icons)
+
+Armor HUD draws durability bars and counts but no item textures, because the
+game's texture atlas isn't reachable from the overlay's private D3D device.
+
+This is a **feature, not a bug fix** — see Phase 7 below. It is the largest
+remaining piece of work. Do not attempt it before bugs 1–4 are closed.
+
+Two viable approaches:
+- **Hook the game's own item renderer** and let it draw into the game's UI
+  pass. Flarial: `src/Client/Hook/Hooks/Render/ItemRendererRenderGroupHook.*`
+  and `TextureGroup_getTextureHook.*`.
+- **Resolve `TextureGroup::getTexture`**, obtain the item atlas SRV, and sample
+  it in our own composite shader with per-item UVs. More work, but keeps
+  everything inside our renderer.
+
+The user's own resource pack does this with JSON UI entity renderers
+(`C:\Users\User\Desktop\Glacier v7\packs\Glacier Client v7 [Main]\ui\glacier\
+screens\hud_screen\hud_modules\entity_modules\glacier_armorhud.json`, using
+`gc.lpr`). That is a *pack-side* technique and is **not** the route for the
+DLL — noted only so it isn't confused for one.
+
+## Signature sync — read before touching Signatures.cpp
+
+`src/memory/Signatures.cpp` is **generated**. Never hand-edit it.
+
+```bash
+python tools/sync_signatures.py            # regenerate from Latite master
+python tools/sync_signatures.py --check    # exit 1 if stale
+```
+
+The mapping is explicit: every imported value is named on both sides in
+`tools/sync_signatures.py`. If Latite renames something, the script refuses to
+write and names what it couldn't find — a silent wrong value is the failure
+mode that costs days, so this is deliberate.
+
+`.github/workflows/sync-signatures.yml` runs daily and opens a PR on change.
+
+**Licensing:** that one file is why Glacier is AGPLv3. Keep all imported data
+in it — never inline a pattern or struct offset elsewhere. See
+`docs/acknowledgements.md`.
+
+## Roadmap — remaining phases
+
+Phases 0–5 are done (scaffold, hooks/SDK, EventBus + menu, module catalog,
+config persistence, version targeting + sync tooling).
+
+| Phase | Scope |
+|---|---|
+| **6** | **Interaction & pause** — bugs 1–3. Poll-based mouse input, real game pause via `grabCursor`/`releaseCursor`, remove the `ShowCursor` workaround. |
+| **7** | **Item rendering** — texture atlas access so Armor HUD, Inventory HUD, and hotbar widgets can draw real items. Largest remaining piece. |
+| **8** | **Module catalog expansion** — the pack ships ~30 widgets worth porting: Armor Bar, Bow Indicator, Combo Counter, Death Coords, Direction HUD, Kill Counter, Offhand HUD, Speedometer, Status HUD, Target HUD, Chunk Map, EXP Calculator, Inventory HUD, Low Durability warning, Player List, Server Display, Timer HUD, Walk Distance. Most need only SDK accessors that don't exist yet. |
+| **9** | **Theming & polish** — menu animation, blur, per-module colour presets, keybind-conflict UX. |
+| **10** | **Packaging** — version-string exports for a launcher, tag-triggered release zip (`build.yml` already has the release job). |
+
+Scope boundary (enforced since Phase 0): **visual / HUD / QoL only**. No
+KillAura, reach, fly, aimbot, or server-hitbox manipulation.
+
+## Verification reality
+
+CI proves compilation. It cannot prove anything works in-game — that needs the
+user to inject on Windows and read the debug console. When you change anything
+touching rendering, input, or signatures, say plainly that it's unverified and
+tell the user exactly what log line or on-screen behaviour would confirm it.
+
+`docs/signatures.md` tracks per-entry status; entries stay ⚠️ *inherited* until
+someone confirms them against a running client.
