@@ -98,10 +98,22 @@ public:
     // RawInput, so swallowing window messages never stopped the player from
     // moving behind the menu. Grabbing it again restores normal play.
     //
-    // Returns false if the call couldn't be made (signature missing, or no
-    // ClientInstance yet), so the caller can fall back to hiding the cursor
-    // itself rather than leaving the user with no pointer at all.
+    // Requests a change. The call is NOT made here: it is queued and performed
+    // by applyPendingCursor() on the game's render thread.
+    //
+    // grabCursor/releaseCursor touch the game's input and screen state, and
+    // calling them from Glacier's logic thread while the game is midway through
+    // its own frame is asking for a race the game was never written to
+    // tolerate. Queuing costs one atomic and removes the question.
+    //
+    // Returns false if the request cannot be honoured at all (signatures
+    // missing), so the caller can fall back to hiding the cursor itself rather
+    // than leaving the user with no pointer.
     bool setCursorGrabbed(bool grabbed);
+
+    // Performs any queued grab/release. Called once per frame from the Present
+    // hook, which runs on the game's own render thread.
+    void applyPendingCursor();
 
     // True when both cursor signatures resolved. Independent of whether a
     // ClientInstance currently exists.
@@ -169,6 +181,9 @@ private:
     // Instrumentation caches. Written from game threads, read from the render
     // thread — atomics rather than a mutex, since each is a single scalar and
     // the render thread must never block behind a game thread.
+    // 0 = nothing queued, 1 = grab, 2 = release. See setCursorGrabbed.
+    std::atomic<int>           m_pendingCursor{ 0 };
+
     std::atomic<int>           m_ping{ -1 };
     std::atomic<std::uint64_t> m_pingStamp{ 0 };
     std::atomic<int>           m_worldTime{ -1 };

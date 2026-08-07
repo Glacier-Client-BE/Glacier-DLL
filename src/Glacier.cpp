@@ -85,6 +85,11 @@ void Glacier::start(HMODULE self) {
             return;
         }
 
+        // Grab/release the game's cursor here rather than where the menu was
+        // toggled: this is the game's own render thread, which is the only
+        // thread it is safe to change that state from.
+        sdk::GameSDK::get().applyPendingCursor();
+
         // Sample the mouse before anything hit-tests it. Polled rather than
         // taken from WM_* messages because Bedrock consumes the mouse through
         // RawInput — see the comment on ui::Input. Only while the menu is open:
@@ -111,6 +116,10 @@ void Glacier::start(HMODULE self) {
     d3d.onResize([](IDXGISwapChain*, UINT w, UINT h) {
         ui::Renderer::get().resize(w, h);
     });
+    // Registered before initialize(): the first frame can arrive during it, and
+    // this fires exactly once. attachToWindow is idempotent, so it does not
+    // matter whether this or the provisional attach below runs first.
+    d3d.onWindowResolved([](HWND hwnd) { Glacier::get().attachToWindow(hwnd); });
 
     // Not fatal: without the render hook the client still ticks and keybinds
     // still work; only per-frame drawing is lost.
@@ -119,9 +128,13 @@ void Glacier::start(HMODULE self) {
     }
 
     // 5. Capture window input for the menu and module keybinds.
+    //
+    // Provisional: window() is a guess until the first frame, which is why the
+    // callback below re-attaches to the window the swapchain actually presents
+    // to. Attaching now anyway means keybinds work even if the D3D hook never
+    // produces a frame.
     if (HWND hwnd = d3d.window()) {
-        installWndProc(hwnd);
-        brandWindow(hwnd);
+        attachToWindow(hwnd);
     } else {
         LOG_WARN("no game window — menu and keybinds unavailable");
     }
@@ -171,6 +184,27 @@ void Glacier::start(HMODULE self) {
             // Tracked even when not in game, so walking back into a world with
             // the key still held doesn't immediately open the menu.
             m_menuKeyWasDown.store(menuDown, std::memory_order_relaxed);
+        }
+
+        // Mouse clicks for modules (CPS Counter). Polled for the same reason
+        // the menu key is: Bedrock reads the mouse through RawInput, so
+        // WM_LBUTTONDOWN does not reliably reach our WndProc and the counter
+        // simply never counted. Only while playing — clicks aimed at the menu
+        // are not gameplay clicks, and there is nothing to count on the main
+        // menu.
+        {
+            const bool countable = sdk::GameSDK::get().inGame() && !ui::Menu::get().open();
+            const bool l = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+            const bool r = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+
+            if (countable) {
+                if (l && !m_leftWasDown)  ModuleManager::get().handleClick(false);
+                if (r && !m_rightWasDown) ModuleManager::get().handleClick(true);
+            }
+            // Tracked unconditionally, so a click that started in the menu
+            // isn't counted again the moment the menu closes.
+            m_leftWasDown  = l;
+            m_rightWasDown = r;
         }
 
         ModuleManager::get().tickAll();
@@ -226,6 +260,18 @@ void Glacier::installWndProc(HWND hwnd) {
     m_origWndProc = reinterpret_cast<WNDPROC>(
         SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&Glacier::wndProc)));
     LOG_INFO("WndProc hooked");
+}
+
+void Glacier::attachToWindow(HWND hwnd) {
+    if (!hwnd || (hwnd == m_window && m_origWndProc)) return;
+
+    // Undo whatever we did to the previous window first, or a guess that turned
+    // out wrong leaves a hooked WndProc and a renamed title behind on it.
+    restoreWindowTitle();
+    removeWndProc();
+
+    installWndProc(hwnd);
+    brandWindow(hwnd);
 }
 
 void Glacier::brandWindow(HWND hwnd) {
@@ -372,9 +418,11 @@ LRESULT CALLBACK Glacier::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         if (isGameInputMessage(msg)) {
             return 0;
         }
-    } else if (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN) {
-        ModuleManager::get().handleClick(msg == WM_RBUTTONDOWN);
     }
+    // Module clicks are NOT dispatched from here. They are polled on the logic
+    // thread for the same RawInput reason as the menu key, and having both
+    // would double-count every click in the CPS counter on any build where the
+    // messages do arrive.
 
     return CallWindowProcW(self.m_origWndProc, hwnd, msg, wParam, lParam);
 }

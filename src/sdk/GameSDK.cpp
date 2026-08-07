@@ -241,15 +241,20 @@ bool GameSDK::cursorControlAvailable() const {
 
 bool GameSDK::setCursorGrabbed(bool grabbed) {
     if (!cursorControlAvailable()) return false;
-
-    // No ClientInstance means no world — on the main menu the cursor is already
-    // the game's own, so there is nothing to do and nothing to report as a
-    // failure the caller should work around.
-    void* ci = clientInstance();
-    if (!ci) return false;
-
-    (grabbed ? s_grabCursor : s_releaseCursor)(ci);
+    m_pendingCursor.store(grabbed ? 1 : 2, std::memory_order_relaxed);
     return true;
+}
+
+void GameSDK::applyPendingCursor() {
+    const int pending = m_pendingCursor.exchange(0, std::memory_order_relaxed);
+    if (pending == 0 || !cursorControlAvailable()) return;
+
+    // No ClientInstance means no world, and nothing to grab or release. Dropping
+    // the request is right: entering a world starts grabbed anyway.
+    void* ci = clientInstance();
+    if (!ci) return;
+
+    (pending == 1 ? s_grabCursor : s_releaseCursor)(ci);
 }
 
 // ─── Instrumentation caches ──────────────────────────────────────────────────

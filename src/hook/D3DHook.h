@@ -34,8 +34,14 @@ public:
     bool initialize();
     void shutdown();
 
+    // Fires once, on the first real frame, with the window the game's swap chain
+    // actually presents to. Until then window() is only a guess — see the
+    // comment at the call site in hkPresent.
+    using WindowCallback = std::function<void(HWND)>;
+
     void onPresent(PresentCallback cb) { m_present = std::move(cb); }
     void onResize(ResizeCallback cb)   { m_resize = std::move(cb); }
+    void onWindowResolved(WindowCallback cb) { m_windowResolved = std::move(cb); }
 
     HWND window() const { return m_window; }
 
@@ -63,9 +69,11 @@ private:
     // game's swap chain really uses it (see the mismatch check in hkPresent).
     inline static void** s_hookedVTable = nullptr;
     inline static std::atomic<bool> s_vtableChecked{ false };
+    inline static std::atomic<bool> s_windowConfirmed{ false };
 
     PresentCallback m_present;
     ResizeCallback  m_resize;
+    WindowCallback  m_windowResolved;
     HWND            m_window = nullptr;
     bool            m_initialized = false;
 };

@@ -3,6 +3,7 @@
 #include "HookManager.h"
 #include "../util/Logger.h"
 
+#include <cwchar>
 #include <d3d11.h>
 #include <dxgi.h>
 #include <iterator>
@@ -14,11 +15,25 @@ namespace glacier {
 
 namespace {
 
-// Finds the top-level visible window owned by this process. The throwaway swap
-// chain we create for vtable discovery needs a valid HWND, and the game window
-// is the obvious candidate — using the real window (rather than a synthetic
-// one) also makes it far more likely the driver hands us the same swap-chain
-// implementation the game itself is using.
+// Best guess at the game window, used only until the first frame tells us for
+// certain (see hkPresent). The throwaway swap chain we create for vtable
+// discovery needs a valid HWND, and using the real window rather than a
+// synthetic one makes it far more likely the driver hands us the same
+// swap-chain implementation the game itself is using.
+//
+// "First top-level visible window owned by this process" is not sufficient on
+// its own: Glacier allocates a debug console before this runs, and a freshly
+// created console is a top-level visible window of this process that
+// EnumWindows will happily return first. Console classes are therefore skipped
+// explicitly — a guess that picks our own console is worse than no guess,
+// because everything downstream then works on the wrong window.
+bool isConsoleWindow(HWND hwnd) {
+    wchar_t cls[64]{};
+    if (GetClassNameW(hwnd, cls, static_cast<int>(std::size(cls))) <= 0) return false;
+    return wcscmp(cls, L"ConsoleWindowClass") == 0
+        || wcscmp(cls, L"PseudoConsoleWindow") == 0;
+}
+
 HWND findGameWindow() {
     struct Ctx {
         DWORD pid;
@@ -29,7 +44,8 @@ HWND findGameWindow() {
         auto* c = reinterpret_cast<Ctx*>(lp);
         DWORD pid = 0;
         GetWindowThreadProcessId(hwnd, &pid);
-        if (pid == c->pid && GetWindow(hwnd, GW_OWNER) == nullptr && IsWindowVisible(hwnd)) {
+        if (pid == c->pid && GetWindow(hwnd, GW_OWNER) == nullptr && IsWindowVisible(hwnd)
+            && !isConsoleWindow(hwnd)) {
             c->hwnd = hwnd;
             return FALSE;
         }
@@ -146,6 +162,28 @@ HRESULT STDMETHODCALLTYPE D3DHook::hkPresent(IDXGISwapChain* sc, UINT sync, UINT
                      reinterpret_cast<std::uintptr_t>(s_hookedVTable));
         } else {
             LOG_INFO("D3D hook confirmed live on the game's swapchain");
+        }
+    }
+
+    // The swap chain knows which window it presents to, and that is the only
+    // authoritative answer. Guessing it by enumerating the process's top-level
+    // windows picked up the debug console instead — which hooked the WndProc on
+    // the wrong window (no menu interaction), converted cursor coordinates
+    // against the wrong client origin (hover landing on the wrong widget), and
+    // retitled the console rather than the game.
+    if (!s_windowConfirmed.exchange(true, std::memory_order_relaxed)) {
+        DXGI_SWAP_CHAIN_DESC desc{};
+        if (SUCCEEDED(sc->GetDesc(&desc)) && desc.OutputWindow) {
+            if (desc.OutputWindow != self.m_window) {
+                LOG_INFO("game window corrected to {:#x} (guessed {:#x} before the first frame)",
+                         reinterpret_cast<std::uintptr_t>(desc.OutputWindow),
+                         reinterpret_cast<std::uintptr_t>(self.m_window));
+            }
+            self.m_window = desc.OutputWindow;
+            if (self.m_windowResolved) self.m_windowResolved(desc.OutputWindow);
+        } else {
+            LOG_WARN("could not read the swapchain's output window — input and window "
+                     "branding stay on the guessed window");
         }
     }
 

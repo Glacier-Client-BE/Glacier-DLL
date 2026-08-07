@@ -46,6 +46,11 @@ public:
 private:
     Glacier() = default;
 
+    // Points the WndProc hook and the window branding at `hwnd`, undoing both on
+    // whatever window they were on before. Idempotent, and safe to call from the
+    // render thread — which is where the corrected window arrives from.
+    void attachToWindow(HWND hwnd);
+
     void installWndProc(HWND hwnd);
     void removeWndProc();
 
@@ -79,6 +84,11 @@ private:
     // WndProc hook (window thread) and the GetAsyncKeyState polling loop (logic
     // thread) so the two paths can't both fire for the same physical key press.
     std::atomic<bool> m_menuKeyWasDown = false;
+
+    // Edge state for the polled mouse buttons that feed Module::onClick. Only
+    // ever touched on the logic thread, unlike the menu key flag above.
+    bool m_leftWasDown  = false;
+    bool m_rightWasDown = false;
 };
 
 } // namespace glacier
