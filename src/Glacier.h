@@ -43,6 +43,15 @@ public:
     int  unloadKey() const { return m_unloadKey; }
     void setUnloadKey(int vk) { m_unloadKey = vk; }
 
+    // F1: hides HUD modules without opening the menu, the way Latite and
+    // Flarial's own F1 handling does. Vanilla Bedrock has no native "hide GUI"
+    // state to read back — Flarial's F1Listener is purely client-side, a
+    // bool it flips itself — so this is the same: a toggle Glacier owns, not
+    // a reflection of anything the game is doing.
+    int  hudToggleKey() const { return m_hudToggleKey; }
+    void setHudToggleKey(int vk) { m_hudToggleKey = vk; }
+    bool hudHidden() const { return m_hudHidden.load(std::memory_order_relaxed); }
+
 private:
     Glacier() = default;
 
@@ -99,11 +108,19 @@ private:
     int               m_menuKey     = 'G';
     int               m_menuKeyAlt  = 'M';
     int               m_unloadKey   = VK_END;
+    int               m_hudToggleKey = VK_F1;
     std::atomic<bool> m_shuttingDown   = false;
     // Shared edge-detection flag for the menu toggle key. Written by both the
     // WndProc hook (window thread) and the GetAsyncKeyState polling loop (logic
     // thread) so the two paths can't both fire for the same physical key press.
     std::atomic<bool> m_menuKeyWasDown = false;
+
+    // Only ever touched on the logic thread — the same poll loop that owns the
+    // menu key edge above — so a plain bool is enough for the "was down" side.
+    // The value itself is atomic because the Present callback (render thread)
+    // reads it every frame to decide whether to draw HUD modules.
+    bool              m_hudToggleKeyWasDown = false;
+    std::atomic<bool> m_hudHidden = false;
 
     // Edge state for the polled mouse buttons that feed Module::onClick. Only
     // ever touched on the logic thread, unlike the menu key flag above.

@@ -133,7 +133,23 @@ void Glacier::start(HMODULE self) {
 
         LOG_ONCE("first cursor reconcile survived");
 
-        ModuleManager::get().renderAll();
+        // Modules draw only where Latite and Flarial draw theirs: during actual
+        // gameplay, or while Glacier's own menu is open for editing. Gating on
+        // inGame() alone left modules on screen over the pause menu, inventory,
+        // chat and the loading screen too, because the local player object is
+        // still alive through all of those — inGame() cannot tell them apart.
+        //
+        // cursorGrabbed() can: the game releases its own cursor grab for every
+        // one of those screens and re-grabs it the moment gameplay resumes,
+        // which is exactly the signal Latite's HUDEditor::renderModules uses
+        // (`isActive() || minecraftGame->isCursorGrabbed()`). Glacier's menu
+        // releases the cursor too while open, so editing needs its own
+        // condition rather than falling out of cursorGrabbed().
+        const bool editingHud = ui::Menu::get().open();
+        const bool gameplayHud = sdk::GameSDK::get().cursorGrabbed() && !Glacier::get().hudHidden();
+        if (editingHud || gameplayHud) {
+            ModuleManager::get().renderAll();
+        }
         LOG_ONCE("first module render pass survived");
 
         ui::Menu::get().render();
@@ -217,6 +233,27 @@ void Glacier::start(HMODULE self) {
             // Tracked even when not in game, so walking back into a world with
             // the key still held doesn't immediately open the menu.
             m_menuKeyWasDown.store(menuDown, std::memory_order_relaxed);
+        }
+
+        // F1: hides HUD modules, polled for the same RawInput reason as the
+        // menu key. Not toggled while the menu is open — Flarial's F1Listener
+        // applies the same guard, so an F1 press meant to rebind something in
+        // the menu never also hides the HUD out from under the user.
+        {
+            const bool inGame = sdk::GameSDK::get().inGame();
+            if (!inGame) {
+                // Leaving a world resets it, the same way leaving closes the
+                // menu: a hidden HUD that silently carried over into the next
+                // world would look like modules had stopped working.
+                m_hudHidden.store(false, std::memory_order_relaxed);
+            } else {
+                const bool hudKeyDown = (GetAsyncKeyState(m_hudToggleKey) & 0x8000) != 0;
+                if (hudKeyDown && !m_hudToggleKeyWasDown && !ui::Menu::get().open()) {
+                    m_hudHidden.store(!m_hudHidden.load(std::memory_order_relaxed),
+                                      std::memory_order_relaxed);
+                }
+                m_hudToggleKeyWasDown = hudKeyDown;
+            }
         }
 
         // Mouse clicks for modules (CPS Counter). Polled for the same reason

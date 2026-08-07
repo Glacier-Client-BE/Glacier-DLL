@@ -148,6 +148,7 @@ void applyClientKey(const std::string& key, const std::string& value) {
     if (key == "menuKey")         client.setMenuKey(vk);
     else if (key == "menuKeyAlt") client.setMenuKeyAlt(vk);
     else if (key == "unloadKey")  client.setUnloadKey(vk);
+    else if (key == "hudToggleKey") client.setHudToggleKey(vk);
 }
 
 } // namespace
@@ -260,6 +261,8 @@ bool Config::save() {
                 << "menuKey = "    << client.menuKey()    << '\n'
                 << "menuKeyAlt = " << client.menuKeyAlt() << '\n'
                 << "unloadKey = "  << client.unloadKey()  << '\n'
+                << "# Hides HUD modules without opening the menu (like Latite/Flarial's F1).\n"
+                << "hudToggleKey = " << client.hudToggleKey() << '\n'
                 << "# Draw real item icons using the game's own renderer. Set false if\n"
                 << "# the game ever crashes on world load — this is the only path that\n"
                 << "# calls a game function located by matching a call site.\n"

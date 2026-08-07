@@ -237,12 +237,16 @@ void ItemRendering::drawPending(void* uiRenderContext) {
     if (frac <= 0.0f) return;   // no usable GUI scale — see GameSDK::guiScaleFrac
 
     // The context is a plain buffer the game's constructor fills in. Its exact
-    // size isn't known (upstream declares a deliberate over-estimate), so this
-    // holds a larger fixed buffer and zeroes only what the table claims, which
-    // is what upstream does. Stack rather than heap, and 16-byte aligned: the
+    // size isn't reliably known — Latite's own struct comment admits its 0x500
+    // pad was never measured, and that undersized guess is almost certainly
+    // why this used to take the whole game down: the constructor wrote past a
+    // buffer sized off it, on a thread_local (not stack) allocation, and SEH
+    // around the call couldn't save a corruption like that. This buffer
+    // matches Flarial's independently-padded 0x1000 instead — see the comment
+    // on BaseActorRenderContext::size in Signatures.cpp. 16-byte aligned: the
     // type contains matrices, and handing the constructor an under-aligned
     // pointer would fault on the first aligned store.
-    alignas(16) static thread_local std::uint8_t context[0x800];
+    alignas(16) static thread_local std::uint8_t context[0x1000];
 
     const auto contextSize = static_cast<std::size_t>(sigs.offset("BaseActorRenderContext::size"));
     if (contextSize == 0 || contextSize > sizeof(context)) {
@@ -251,7 +255,11 @@ void ItemRendering::drawPending(void* uiRenderContext) {
         return;
     }
 
-    std::memset(context, 0, contextSize);
+    // Zero the whole reserved buffer, not just contextSize bytes. Both
+    // reference clients zero the type's full declared size before calling the
+    // constructor (`memset(this, 0, sizeof(BaseActorRenderContext))`) — this
+    // matches that rather than the partial zero this used to do.
+    std::memset(context, 0, sizeof(context));
 
     LOG_ONCE("constructing BaseActorRenderContext ({} bytes)", contextSize);
     if (!constructContextGuarded(context, screenContext, clientInstance, minecraftGame)) {
