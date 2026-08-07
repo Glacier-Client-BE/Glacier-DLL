@@ -13,24 +13,22 @@
 
 // Direct2D/DirectWrite overlay renderer.
 //
-// ── Why compositing instead of drawing straight onto the back buffer ──
+// Draws straight onto the game's back buffer, the way Flarial does:
+// D2D1CreateDeviceContext binds the swap chain's DXGI surface directly, on the
+// game's own device.
 //
-// The obvious approach is CreateDxgiSurfaceRenderTarget on the game's back
-// buffer. It is also fragile: Direct2D will only bind a surface whose format it
-// supports (practically, B8G8R8A8_UNORM), and it requires the *game's* D3D11
-// device to have been created with D3D11_CREATE_DEVICE_BGRA_SUPPORT. Neither is
-// under our control, and Bedrock's back buffer is commonly R8G8B8A8 — so that
-// path can simply refuse to initialize on a perfectly healthy machine.
+// This replaced a private-device design — a second D3D11 device rendering into
+// a shared keyed-mutex texture, composited each frame with a fullscreen
+// triangle. That was written around a belief that D2D could not bind the game's
+// back buffer (wrong format, missing BGRA flag). Flarial demonstrates it can,
+// and the machinery it justified was the source of every hang this client has
+// had: two deadlocks on the keyed mutex, plus a per-frame pass that saved and
+// restored ten pieces of the game's pipeline state on its own context.
 //
-// Instead Glacier owns a second D3D11 device (created with the flags D2D needs),
-// renders the UI into a shared B8G8R8A8 texture, and composites that texture
-// onto the game's back buffer with a fullscreen triangle. This works regardless
-// of the game's back-buffer format or device flags. The cost is one texture copy
-// per frame, which is irrelevant next to a menu that is only drawn while open.
-//
-// Access to the shared texture is serialized with a keyed mutex: our device
-// writes it, the game's device reads it, and without the mutex that is a race
-// across two devices.
+// What remains has no second device, no shared surface, no cross-device
+// synchronisation, and no state to restore. The only rule it adds is that
+// nothing may hold a back-buffer reference when the game calls ResizeBuffers —
+// see resize().
 namespace glacier::ui {
 
 // 0xAARRGGBB, matching how colors are usually written by hand.
@@ -68,14 +66,15 @@ public:
         return instance;
     }
 
-    // Creates the private device and D2D/DWrite stack on the same adapter as
-    // `gameDevice`. Called lazily from beginFrame, because the game's adapter
-    // is not knowable until it hands us its device. Idempotent.
+    // Brings up DirectWrite. The D2D context itself is created from the game's
+    // back buffer on the first frame. Idempotent; the parameter is unused and
+    // kept so callers need not care which design is behind it.
     bool initialize(ID3D11Device* gameDevice);
     void shutdown();
 
-    // Called when the game's back buffer changes size. Drops and recreates the
-    // shared surface; safe to call with unchanged dimensions (no-op).
+    // Called from the ResizeBuffers hook, BEFORE the game's own call. Drops
+    // every reference we hold to the back buffer. Never a no-op — see the
+    // implementation for why skipping it on an unchanged or zero size was a bug.
     void resize(UINT width, UINT height);
 
     // Frame bracket. beginFrame returns false if the renderer is unusable, in
@@ -101,12 +100,8 @@ public:
 private:
     Renderer() = default;
 
-    bool createSharedSurface(UINT width, UINT height);
-    void releaseSharedSurface();
-    bool createGameResources(ID3D11Device* device);
-    void releaseGameResources();
-    void composite(ID3D11DeviceContext* context);
-    ID3D11RenderTargetView* backBufferRtv();
+    bool createTarget(IDXGISwapChain* swapChain);
+    void releaseTarget();
 
     // Text formats are immutable and reused every frame — creating one per
     // drawText call would allocate thousands of COM objects per second. Cached
@@ -131,32 +126,12 @@ private:
     IDWriteTextFormat* formatFor(float size, bool bold, TextAlign align);
     void releaseFormats();
 
-    // ── Our private device (writes the overlay) ──
-    ID3D11Device*        m_device   = nullptr;
-    ID3D11DeviceContext* m_context  = nullptr;
-    ID2D1Factory1*       m_d2dFactory = nullptr;
-    ID2D1Device*         m_d2dDevice  = nullptr;
-    ID2D1DeviceContext*  m_d2d        = nullptr;
-    IDWriteFactory*      m_dwrite     = nullptr;
-    ID2D1SolidColorBrush* m_brush     = nullptr;
-
-    // ── Shared surface ──
-    ID3D11Texture2D* m_sharedTexture = nullptr;   // owned by m_device
-    IDXGIKeyedMutex* m_writeMutex    = nullptr;
-    ID2D1Bitmap1*    m_target        = nullptr;
-    HANDLE           m_sharedHandle  = nullptr;
-
-    // ── Game-side resources (read the overlay, composite it) ──
-    ID3D11Device*             m_gameDevice = nullptr;
-    ID3D11Texture2D*          m_gameTexture = nullptr;
-    IDXGIKeyedMutex*          m_readMutex   = nullptr;
-    ID3D11ShaderResourceView* m_srv         = nullptr;
-    ID3D11VertexShader*       m_vs          = nullptr;
-    ID3D11PixelShader*        m_ps          = nullptr;
-    ID3D11BlendState*         m_blend       = nullptr;
-    ID3D11SamplerState*       m_sampler     = nullptr;
-    ID3D11RasterizerState*    m_raster      = nullptr;
-    ID3D11RenderTargetView*   m_backBufferRtv = nullptr;
+    // Everything below lives on the GAME's device. m_d2d and m_target both hold
+    // a reference to the back buffer, which is why resize() drops them.
+    IDWriteFactory*       m_dwrite = nullptr;
+    ID2D1DeviceContext*   m_d2d    = nullptr;
+    ID2D1Bitmap1*         m_target = nullptr;
+    ID2D1SolidColorBrush* m_brush  = nullptr;
 
     float m_width  = 0;
     float m_height = 0;
@@ -168,8 +143,6 @@ private:
     bool  m_deviceFailed = false;
     bool  m_drawing = false;
     int   m_clipDepth = 0;
-    ID3D11DeviceContext* m_frameContext = nullptr;
-    IDXGISwapChain*      m_frameSwapChain = nullptr;
 };
 
 } // namespace glacier::ui
