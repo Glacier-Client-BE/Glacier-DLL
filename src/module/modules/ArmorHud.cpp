@@ -1,6 +1,7 @@
 #include "../HudModule.h"
 #include "../ModuleRegistry.h"
 #include "../../sdk/GameSDK.h"
+#include "../../sdk/ItemRendering.h"
 
 #include <string>
 
@@ -39,9 +40,12 @@ public:
         float x = origin.x;
 
         if (sdkRef.armorSupported()) {
+            int slot = 0;
             for (const auto& stack : sdkRef.armor()) {
+                const int thisSlot = slot++;
                 if (!stack.valid && !showEmpty) continue;
-                drawSlot(x, origin.y, cell, stack);
+                drawSlot(x, origin.y, cell, stack,
+                         sdk::ItemRef{ sdk::ItemRef::Source::Armor, thisSlot });
                 x += cell + gap;
             }
         } else if (settingBool("notice", true)) {
@@ -60,7 +64,11 @@ public:
             const auto held = sdkRef.heldItem();
             if (held.valid || showEmpty) {
                 x += gap;   // visual break between armor and hand
-                drawSlot(x, origin.y, cell, held);
+                // -1 is "whatever slot is selected", resolved at draw time
+                // rather than baked in here — the player can scroll between
+                // this frame and the one that draws the icon.
+                drawSlot(x, origin.y, cell, held,
+                         sdk::ItemRef{ sdk::ItemRef::Source::Hotbar, -1 });
                 x += cell + gap;
             }
         }
@@ -70,18 +78,32 @@ public:
     }
 
 private:
-    void drawSlot(float x, float y, float cell, const sdk::ItemStack& stack) {
+    void drawSlot(float x, float y, float cell, const sdk::ItemStack& stack,
+                  const sdk::ItemRef& ref) {
         auto& r = ui::Renderer::get();
+        auto& items = sdk::ItemRendering::get();
         const ui::Rect box{ x, y, cell, cell };
 
-        r.fillRoundedRect(box, 3.0f, ui::Color::rgba(0x55101418));
+        // The icon is drawn by the game, one pass earlier and therefore *under*
+        // this overlay — so when icons are available the slot gets an outline
+        // only. Filling it, even at a third alpha, would wash out the very
+        // thing the fill used to stand in for.
+        if (!items.available()) {
+            r.fillRoundedRect(box, 3.0f, ui::Color::rgba(0x55101418));
+        }
         r.strokeRoundedRect(box, 3.0f, ui::Color::rgba(0x445A6070), 1.0f);
 
         if (!stack.valid) return;
 
-        // No item icons: the texture atlas isn't reachable from the overlay's
-        // private device. A durability bar plus the count is the useful part
-        // anyway, and a wrong icon would be worse than none.
+        // Ask the game to draw the real item here. Inset slightly so the icon
+        // doesn't touch the outline, and leave the bottom strip clear for the
+        // durability bar.
+        if (items.available()) {
+            const float inset = cell * 0.10f;
+            items.submit(sdk::ItemDraw{ ref, x + inset, y + inset,
+                                        cell - inset * 2.0f, 1.0f });
+        }
+
         if (settingBool("bars", true) && stack.maxDurability > 0) {
             const float frac = stack.durabilityFraction();
             const ui::Rect track{ x + 3.0f, box.bottom() - 6.0f, cell - 6.0f, 3.0f };

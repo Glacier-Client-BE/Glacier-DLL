@@ -28,7 +28,26 @@ public:
     // Seeds the table for the targeted game build. Defined in Signatures.cpp.
     void seedBedrock();
 
-    void addSignature(std::string name, std::string idaPattern);
+    // `derefOffset` says how to turn the byte-pattern match into the address the
+    // caller actually wants:
+    //
+    //   kMatchIsTarget (default)  the pattern sits at the start of the thing —
+    //                             use the match address as-is.
+    //   >= 0                      the pattern matches an *instruction that
+    //                             references* the target (typically a `call
+    //                             rel32`, sometimes a `lea`/`mov` RIP-relative).
+    //                             At match+derefOffset there is a signed 32-bit
+    //                             displacement; the target is
+    //                             match + derefOffset + 4 + disp.
+    //
+    // The second form exists because some functions have no stable prologue to
+    // match on, so upstream matches a call site instead. Getting this wrong
+    // yields an address that looks plausible and executes garbage, which is why
+    // it is stated per entry in the generated table rather than inferred.
+    static constexpr int kMatchIsTarget = -1;
+
+    void addSignature(std::string name, std::string idaPattern,
+                      int derefOffset = kMatchIsTarget);
     void addOffset(std::string name, std::ptrdiff_t offset);
 
     // ── Version gating ──
@@ -83,6 +102,7 @@ private:
 
     struct Entry {
         std::string    pattern;
+        int            derefOffset = kMatchIsTarget;
         std::uintptr_t address = 0;
     };
 

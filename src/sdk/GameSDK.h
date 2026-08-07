@@ -126,6 +126,23 @@ public:
     bool                     armorSupported() const;
     ItemStack                heldItem() const;
 
+    // Raw game `ItemStack*` for a slot, or nullptr. These exist for the item
+    // renderer, which has to hand the game back its own object rather than our
+    // decoded copy.
+    //
+    // The pointer is only valid for the call frame that obtained it — the
+    // containers behind it are the game's, and it must never be stored across
+    // frames. `slot` is 0..3 (helmet -> boots) for armor, and 0..8 or -1 for
+    // "currently selected" on the hotbar.
+    void* rawArmorStack(int slot) const;
+    void* rawHotbarStack(int slot) const;
+
+    // 1 / the game's GUI scale, i.e. GUI units per screen pixel. Item drawing
+    // needs it to convert Glacier's pixel layout into the coordinates the
+    // game's UI renderer expects. Returns 0 when unavailable, which callers
+    // must treat as "cannot draw" rather than substituting 1.
+    float guiScaleFrac() const;
+
 private:
     GameSDK() = default;
 

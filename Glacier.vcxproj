@@ -87,6 +87,7 @@
     <ClCompile Include="src\memory\GameVersion.cpp" />
     <ClCompile Include="src\hook\D3DHook.cpp" />
     <ClCompile Include="src\sdk\GameSDK.cpp" />
+    <ClCompile Include="src\sdk\ItemRendering.cpp" />
     <ClCompile Include="src\module\ModuleManager.cpp" />
     <ClCompile Include="src\module\modules\Fullbright.cpp" />
     <ClCompile Include="src\module\modules\Watermark.cpp" />
@@ -116,6 +117,7 @@
     <ClInclude Include="src\hook\D3DHook.h" />
     <ClInclude Include="src\sdk\GameSDK.h" />
     <ClInclude Include="src\sdk\EntityComponents.h" />
+    <ClInclude Include="src\sdk\ItemRendering.h" />
     <ClInclude Include="src\module\Module.h" />
     <ClInclude Include="src\module\HudModule.h" />
     <ClInclude Include="src\module\ModuleRegistry.h" />

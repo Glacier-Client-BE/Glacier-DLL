@@ -6,6 +6,7 @@
 #include "hook/HookManager.h"
 #include "module/ModuleManager.h"
 #include "sdk/GameSDK.h"
+#include "sdk/ItemRendering.h"
 #include "ui/Input.h"
 #include "ui/KeyNames.h"
 #include "ui/Menu.h"
@@ -47,6 +48,7 @@ void Glacier::start(HMODULE self) {
     }
 
     sdk::GameSDK::get().installHooks();
+    sdk::ItemRendering::get().installHooks();
 
     // Restore saved settings. Deliberately after installHooks(): loading can
     // re-enable a module, whose onEnable() may depend on a hook being live, and
@@ -85,6 +87,10 @@ void Glacier::start(HMODULE self) {
 
         ModuleManager::get().renderAll();
         ui::Menu::get().render();
+
+        // Hand this frame's item-icon requests to the game's UI pass, which
+        // draws them at the start of the next frame. See sdk/ItemRendering.h.
+        sdk::ItemRendering::get().publish();
 
         gfx.endFrame();
     });

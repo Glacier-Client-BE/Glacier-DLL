@@ -46,10 +46,11 @@ void SignatureManager::seedBedrock() {
     // ── Signatures ──
 
     // The root of the object graph. A `mov [rip+disp], r15` store into a
-    // global; the RIP-relative operand at +3 addresses the global itself.
-    // Resolved in GameSDK via offsetFromSig(sig, 3).
+    // global; the RIP-relative operand at +3 addresses the global itself,
+    // so this resolves to the global rather than to the instruction.
     addSignature("Platform_GameCore",
-        "4C 89 3D ? ? ? ? 4D 85 FF");
+        "4C 89 3D ? ? ? ? 4D 85 FF",
+        /*deref*/ 3);
 
     // Hooked by Fullbright to return an override brightness. The trailing
     // immediate is the option index and it moves between builds, which is
@@ -82,6 +83,30 @@ void SignatureManager::seedBedrock() {
     addSignature("Actor::attack",
         "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 ? ? ? ? 0F 29 B5 ? ? ? ? 48 C7 85 ? ? ? ? ? ? ? ? 4D 89 CF 4D 89 C6 48 89 D6 48 89 CF 41 8B 80");
 
+    // Hooked to get a foothold inside the game's UI render pass. The second
+    // argument is a MinecraftUIRenderContext, which carries the live
+    // ScreenContext that item drawing requires. Matched at a call site, so
+    // the displacement at +1 has to be followed to reach the function.
+    addSignature("ScreenView::setupAndRender",
+        "E8 ? ? ? ? 48 8B 4B ? 48 85 C9 74 ? 48 8B 01 48 8B 40 ? 48 89 FA FF 15 ? ? ? ? 48 8D 4D",
+        /*deref*/ 1);
+    // Constructor, called on a zeroed stack buffer to build the context
+    // renderGuiItemNew wants. Not paired with a destructor call: upstream
+    // leaves the object to go out of scope the same way, and the type owns
+    // nothing we allocated.
+    addSignature("BaseActorRenderContext::BaseActorRenderContext",
+        "55 41 56 56 57 53 48 83 EC ? 48 8D 6C 24 ? 48 C7 45 ? ? ? ? ? 4C 89 C6 48 89 D7 49 89 CE 48 8D 05 ? ? ? ? 48 89 01 0F 57 C0");
+    // The actual icon draw. Also matched at a call site (deref 1). Argument
+    // order is NOT the declaration order — see sdk/ItemRendering.cpp.
+    addSignature("ItemRenderer::renderGuiItemNew",
+        "E8 ? ? ? ? 48 8D 55 ? 4C 8D 85 ? ? ? ? 48 89 F1 E8 ? ? ? ? 80 BF",
+        /*deref*/ 1);
+    // Real damage value for durability bars. The raw auxValue field is not
+    // the damage for every item, which is why this is a call and not an
+    // offset read.
+    addSignature("ItemStackBase::getDamageValue",
+        "56 57 48 83 EC ? 48 8B 05 ? ? ? ? 48 31 E0 48 89 44 24 ? 48 8B 41 ? 48 85 C0 74 ? 48 83 38");
+
     // ── Offsets ──
     // *(Platform_GameCore sig deref) -> winMain; +0x08 -> Platform_GameCore*
     addOffset("WinMain::platformGameCore", 0x08);
@@ -113,6 +138,25 @@ void SignatureManager::seedBedrock() {
     addOffset("PlayerInventory::inventory", 0xB8);
     // Inventory::getItem(int) vtable index — the game bounds-checks for us
     addOffset("Inventory::getItemVIndex", 7);
+
+    // Plain members in Latite's MinecraftUIRenderContext.h, not CLASS_FIELD:
+    //   class ClientInstance* cinst;  ScreenContext* screenContext;
+    addOffset("MinecraftUIRenderContext::clientInstance", 0x00);
+    addOffset("MinecraftUIRenderContext::screenContext", 0x08);
+    // Screen pixels per GUI unit
+    addOffset("GuiData::guiScale", 0x5C);
+    // 1/guiScale. The game keeps both; we read this one because
+    // every conversion we do is pixels -> GUI units.
+    addOffset("GuiData::guiScaleFrac", 0x60);
+    addOffset("GuiData::screenSize", 0x40);
+    addOffset("BaseActorRenderContext::itemRenderer", 0x58);
+    // Upstream declares `char pad[0x500]` with a "TODO: check actual
+    // size" — so this is an upper bound, not a measured size. We only
+    // ever zero and stack-allocate this many bytes, and over-reserving
+    // is the safe direction to be wrong in.
+    addOffset("BaseActorRenderContext::size", 0x500);
+    // Item::getMaxDamage() vtable index — 0 for anything not damageable
+    addOffset("Item::getMaxDamageVIndex", 36);
 
     // static_assert(sizeof(ItemStack) == 0x98) in Latite's ItemStack.h
     addOffset("ItemStack::size", 0x98);

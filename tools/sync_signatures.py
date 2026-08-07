@@ -64,6 +64,18 @@ class SigEntry:
     comment: str = ""
     blank_before: bool = False
 
+    # How the byte-pattern match becomes the address we want. None means the
+    # match *is* the target. An int means the pattern matches an instruction
+    # that references the target, and at match+N there is a signed 32-bit
+    # displacement (see SignatureManager::addSignature).
+    #
+    # Upstream encodes the same thing as a resolver lambda: `return res;` for
+    # None, `store.deref(N)` for N. We declare it here and CHECK it against
+    # theirs, because this is a value that can change without the pattern
+    # changing, and getting it wrong produces an address that resolves fine and
+    # then executes something else entirely.
+    deref: int | None = None
+
 
 @dataclass(frozen=True)
 class OffsetEntry:
@@ -79,8 +91,9 @@ SIGNATURES: list[SigEntry] = [
     SigEntry(
         "Platform_GameCore", "Platform_GameCore",
         "The root of the object graph. A `mov [rip+disp], r15` store into a\n"
-        "// global; the RIP-relative operand at +3 addresses the global itself.\n"
-        "// Resolved in GameSDK via offsetFromSig(sig, 3).",
+        "// global; the RIP-relative operand at +3 addresses the global itself,\n"
+        "// so this resolves to the global rather than to the instruction.",
+        deref=3,
     ),
     SigEntry(
         "Options::getGamma", "Options::getGamma",
@@ -119,6 +132,41 @@ SIGNATURES: list[SigEntry] = [
         "Observed read-only for the Reach display. `this` is the attacker, so\n"
         "// no GameMode->player indirection is needed.",
         blank_before=True,
+    ),
+
+    # ── Item rendering (Phase 7) ──
+    # Item icons cannot be drawn by Glacier's own D2D overlay: the textures live
+    # in the game's atlas, on the game's device, and are only bound during the
+    # game's UI pass. So we borrow the game's own item renderer, from inside the
+    # game's own render call. These four are what that needs.
+    SigEntry(
+        "ScreenView::setupAndRender", "ScreenView::setupAndRender",
+        "Hooked to get a foothold inside the game's UI render pass. The second\n"
+        "// argument is a MinecraftUIRenderContext, which carries the live\n"
+        "// ScreenContext that item drawing requires. Matched at a call site, so\n"
+        "// the displacement at +1 has to be followed to reach the function.",
+        blank_before=True,
+        deref=1,
+    ),
+    SigEntry(
+        "BaseActorRenderContext::BaseActorRenderContext",
+        "BaseActorRenderContext::BaseActorRenderContext",
+        "Constructor, called on a zeroed stack buffer to build the context\n"
+        "// renderGuiItemNew wants. Not paired with a destructor call: upstream\n"
+        "// leaves the object to go out of scope the same way, and the type owns\n"
+        "// nothing we allocated.",
+    ),
+    SigEntry(
+        "ItemRenderer::renderGuiItemNew", "ItemRenderer::renderGuiItemNew",
+        "The actual icon draw. Also matched at a call site (deref 1). Argument\n"
+        "// order is NOT the declaration order — see sdk/ItemRendering.cpp.",
+        deref=1,
+    ),
+    SigEntry(
+        "ItemStackBase::getDamageValue", "ItemStackBase::getDamageValue",
+        "Real damage value for durability bars. The raw auxValue field is not\n"
+        "// the damage for every item, which is why this is a call and not an\n"
+        "// offset read.",
     ),
 ]
 
@@ -167,6 +215,31 @@ OFFSETS: list[OffsetEntry] = [
     OffsetEntry("Inventory::getItemVIndex", "", "", literal=7,
                 comment="Inventory::getItem(int) vtable index — the game bounds-checks for us"),
 
+    # ── Item rendering (Phase 7) ──
+    OffsetEntry("MinecraftUIRenderContext::clientInstance", "", "", literal=0x00,
+                comment="Plain members in Latite's MinecraftUIRenderContext.h, not CLASS_FIELD:\n"
+                        "//   class ClientInstance* cinst;  ScreenContext* screenContext;",
+                blank_before=True),
+    OffsetEntry("MinecraftUIRenderContext::screenContext", "", "", literal=0x08),
+    OffsetEntry("GuiData::guiScale",
+                "src/mc/common/client/gui/GuiData.h", "guiScale",
+                comment="Screen pixels per GUI unit"),
+    OffsetEntry("GuiData::guiScaleFrac",
+                "src/mc/common/client/gui/GuiData.h", "guiScaleFrac",
+                comment="1/guiScale. The game keeps both; we read this one because\n"
+                        "// every conversion we do is pixels -> GUI units."),
+    OffsetEntry("GuiData::screenSize",
+                "src/mc/common/client/gui/GuiData.h", "screenSize"),
+    OffsetEntry("BaseActorRenderContext::itemRenderer",
+                "src/mc/common/client/renderer/game/BaseActorRenderContext.h", "itemRenderer"),
+    OffsetEntry("BaseActorRenderContext::size", "", "", literal=0x500,
+                comment="Upstream declares `char pad[0x500]` with a \"TODO: check actual\n"
+                        "// size\" — so this is an upper bound, not a measured size. We only\n"
+                        "// ever zero and stack-allocate this many bytes, and over-reserving\n"
+                        "// is the safe direction to be wrong in."),
+    OffsetEntry("Item::getMaxDamageVIndex", "", "", literal=0x24,
+                comment="Item::getMaxDamage() vtable index — 0 for anything not damageable"),
+
     OffsetEntry("ItemStack::size", "", "", literal=0x98,
                 comment="static_assert(sizeof(ItemStack) == 0x98) in Latite's ItemStack.h",
                 blank_before=True),
@@ -194,15 +267,49 @@ def upstream_sha(ref: str) -> str:
 
 # ── Parsing ──────────────────────────────────────────────────────────────────
 
-# Matches:  "48 83 EC ..."_sig, "Options::getGamma"
-SIG_RE = re.compile(r'"([0-9A-Fa-f? ]+)"_sig\s*,\s*"([^"]+)"')
+# One `inline static SigImpl Foo { ... };` declaration. Terminating on `};`
+# rather than a brace counter is safe because the resolver lambdas inside end
+# with `},` — never `};`.
+BLOCK_RE = re.compile(r"SigImpl\s+\w+\s*\{(.*?)\};", re.S)
+
+# Matches:  "48 83 EC ..."_sig
+PATTERN_RE = re.compile(r'"([0-9A-Fa-f? ]+)"_sig')
+NAME_RE = re.compile(r'"([^"]*::[^"]*|[A-Za-z_]\w*)"\s*\}?\s*;?\s*$', re.M)
+
+# The two resolver shapes we understand.
+DEREF_RE = re.compile(r"store\.deref\(\s*(\d+)\s*\)")
+IDENTITY_RE = re.compile(r"return\s+res\s*;")
 
 # Matches:  CLASS_FIELD(Type*, name, 0x1A0);
 FIELD_RE = re.compile(r"CLASS_FIELD\(\s*[^,]+,\s*(\w+)\s*,\s*(0x[0-9A-Fa-f]+)\s*\)")
 
+# What upstream says about one signature: its bytes, and how it resolves.
+# `deref` is None for "the match is the target", an int for a displacement
+# offset, or the string "unknown" when the resolver isn't one of the two shapes
+# we can read — which must be loud rather than assumed.
+Upstream = tuple[str, "int | None | str"]
 
-def parse_signatures(text: str) -> dict[str, str]:
-    return {name: pattern.strip() for pattern, name in SIG_RE.findall(text)}
+
+def parse_signatures(text: str) -> dict[str, Upstream]:
+    out: dict[str, Upstream] = {}
+    for body in BLOCK_RE.findall(text):
+        pattern = PATTERN_RE.search(body)
+        if not pattern:
+            continue
+        # The name is the last quoted string in the block, after the pattern.
+        names = re.findall(r'"([^"]+)"', body[pattern.end():])
+        if not names:
+            continue
+
+        if m := DEREF_RE.search(body):
+            deref: int | None | str = int(m.group(1))
+        elif IDENTITY_RE.search(body):
+            deref = None
+        else:
+            deref = "unknown"
+
+        out[names[-1]] = (pattern.group(1).strip(), deref)
+    return out
 
 
 def parse_fields(text: str) -> dict[str, int]:
@@ -273,21 +380,43 @@ def emit_comment(text: str, indent: str = "    ") -> list[str]:
             for line in text.split("\n")]
 
 
-def generate(sigs: dict[str, str], fields: dict[str, dict[str, int]], sha: str) -> tuple[str, list[str]]:
+def generate(sigs: dict[str, Upstream], fields: dict[str, dict[str, int]], sha: str) -> tuple[str, list[str]]:
     """Returns (file contents, list of problems)."""
     problems: list[str] = []
     out: list[str] = [HEADER.format(repo=REPO, sha=sha)]
 
     for entry in SIGNATURES:
-        pattern = sigs.get(entry.upstream)
-        if pattern is None:
+        found = sigs.get(entry.upstream)
+        if found is None:
             problems.append(f"signature '{entry.upstream}' not found upstream")
             continue
+        pattern, upstream_deref = found
+
+        # A resolver we can't read is not a reason to guess. If upstream grew a
+        # resolver shape this script doesn't understand, the honest outcome is a
+        # refusal that names the entry.
+        if upstream_deref == "unknown":
+            problems.append(
+                f"signature '{entry.upstream}' has a resolver this script cannot read — "
+                f"read it in {ADDRESSES} and set SigEntry.deref accordingly")
+            continue
+        if upstream_deref != entry.deref:
+            problems.append(
+                f"signature '{entry.upstream}' resolves as "
+                f"{'deref(%d)' % upstream_deref if upstream_deref is not None else 'the match itself'} "
+                f"upstream, but our table says "
+                f"{'deref(%d)' % entry.deref if entry.deref is not None else 'the match itself'}")
+            continue
+
         if entry.blank_before:
             out.append("")
         out.extend(emit_comment(entry.comment))
         out.append(f'    addSignature("{entry.glacier}",')
-        out.append(f'        "{pattern}");')
+        if entry.deref is None:
+            out.append(f'        "{pattern}");')
+        else:
+            out.append(f'        "{pattern}",')
+            out.append(f'        /*deref*/ {entry.deref});')
 
     out.append("")
     out.append("    // ── Offsets ──")

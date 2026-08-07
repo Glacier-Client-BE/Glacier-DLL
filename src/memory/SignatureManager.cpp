@@ -20,8 +20,8 @@ bool SignatureManager::checkAboveOrEqual(int major, int minor, int patch) {
     return v.atLeast(major, minor, patch);
 }
 
-void SignatureManager::addSignature(std::string name, std::string idaPattern) {
-    m_sigs[std::move(name)] = Entry{ std::move(idaPattern), 0 };
+void SignatureManager::addSignature(std::string name, std::string idaPattern, int derefOffset) {
+    m_sigs[std::move(name)] = Entry{ std::move(idaPattern), derefOffset, 0 };
 }
 
 void SignatureManager::addOffset(std::string name, std::ptrdiff_t offset) {
@@ -77,7 +77,21 @@ std::size_t SignatureManager::scanAll() {
             if (i >= work.size()) return;
 
             if (auto hit = findSignature(work[i]->pattern, game)) {
-                work[i]->address = *hit;
+                // A call-site pattern still has to be followed to the function
+                // it references. A target that lands outside the module means
+                // the displacement was decoded from the wrong instruction, so
+                // treat it as unresolved rather than hand back a wild pointer.
+                std::uintptr_t target = *hit;
+                if (work[i]->derefOffset >= 0) {
+                    target = offsetFromSig(target, work[i]->derefOffset);
+                    if (!game.contains(target)) {
+                        work[i]->address = 0;
+                        std::scoped_lock lock(failMutex);
+                        failures.push_back(*names[i] + " (matched, but its target is outside the module)");
+                        continue;
+                    }
+                }
+                work[i]->address = target;
                 resolved.fetch_add(1, std::memory_order_relaxed);
             } else {
                 work[i]->address = 0;

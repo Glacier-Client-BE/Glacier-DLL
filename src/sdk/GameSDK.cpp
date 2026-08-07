@@ -75,6 +75,13 @@ using CursorFn = void(__fastcall*)(void*);
 CursorFn s_grabCursor = nullptr;
 CursorFn s_releaseCursor = nullptr;
 
+// ── ItemStackBase::getDamageValue ──
+// The real damage value. The raw auxValue field is not the damage for every
+// item, so reading it as one produced durability numbers that were right for
+// tools and meaningless for everything else.
+using DamageFn = std::int16_t(__fastcall*)(void*);
+DamageFn s_getDamageValue = nullptr;
+
 // Reads a pointer field, tolerating a null base so a broken chain degrades to
 // nullptr rather than faulting.
 inline void* deref(void* base, std::ptrdiff_t offset) {
@@ -93,17 +100,13 @@ bool GameSDK::resolve() {
 
     // The whole object graph hangs off this one global. Without it there is no
     // player, no world, and nothing worth attaching for.
-    const auto pgcSite = sigs.sig("Platform_GameCore");
-    if (!pgcSite) {
-        LOG_ERROR("Platform_GameCore not resolved — aborting attach");
-        return false;
-    }
-
-    // `mov [rip+disp], r15`: the RIP-relative operand at +3 addresses the
-    // global itself.
-    m_gameCoreGlobal = memory::offsetFromSig(pgcSite, 3);
+    //
+    // The signature entry carries its own deref (the pattern matches the `mov
+    // [rip+disp], r15` that writes the global, and the displacement at +3 is
+    // followed for us), so this is already the address of the global.
+    m_gameCoreGlobal = sigs.sig("Platform_GameCore");
     if (!m_gameCoreGlobal) {
-        LOG_ERROR("could not decode the Platform_GameCore global — aborting attach");
+        LOG_ERROR("Platform_GameCore not resolved — aborting attach");
         return false;
     }
 
@@ -121,6 +124,14 @@ bool GameSDK::resolve() {
     if (!s_grabCursor || !s_releaseCursor) {
         LOG_WARN("ClientInstance::grabCursor/releaseCursor not resolved — the game will "
                  "keep receiving movement and look input while the menu is open");
+    }
+
+    // Optional too. Without it, durability falls back to the auxValue read,
+    // which is right for some items and wrong for others.
+    s_getDamageValue = reinterpret_cast<DamageFn>(sigs.sig("ItemStackBase::getDamageValue"));
+    if (!s_getDamageValue) {
+        LOG_WARN("ItemStackBase::getDamageValue not resolved — durability values will be "
+                 "approximated from auxValue and may be wrong for non-tool items");
     }
 
     m_resolved = true;
@@ -309,70 +320,112 @@ ItemStack GameSDK::readStack(void* stackPtr) const {
 
     auto& sigs = SignatureManager::get();
 
-    // A null Item** means the slot is empty (air), which is a valid answer
-    // rather than a failure.
-    void* item = deref(stackPtr, sigs.offset("ItemStack::item"));
-    if (!item) return out;
+    // The field is an `Item**`. A null one means the slot is empty (air), which
+    // is a valid answer rather than a failure.
+    void* itemHandle = deref(stackPtr, sigs.offset("ItemStack::item"));
+    if (!itemHandle) return out;
 
-    out.valid  = true;
-    out.count  = *reinterpret_cast<std::uint8_t*>(
+    out.valid = true;
+    out.count = *reinterpret_cast<std::uint8_t*>(
         reinterpret_cast<std::uintptr_t>(stackPtr) + sigs.offset("ItemStack::count"));
-    out.damage = *reinterpret_cast<std::int16_t*>(
-        reinterpret_cast<std::uintptr_t>(stackPtr) + sigs.offset("ItemStack::auxValue"));
+
+    out.damage = s_getDamageValue
+        ? s_getDamageValue(stackPtr)
+        : *reinterpret_cast<std::int16_t*>(
+              reinterpret_cast<std::uintptr_t>(stackPtr) + sigs.offset("ItemStack::auxValue"));
+
+    // One more hop to the Item itself, then ask it how much damage it takes to
+    // break. 0 means "not damageable", which ItemStack already treats as "no
+    // durability bar" — so nothing special is needed for blocks and food.
+    void* item = *reinterpret_cast<void**>(itemHandle);
+    const auto maxDamageIndex = sigs.offset("Item::getMaxDamageVIndex");
+    if (item && maxDamageIndex > 0) {
+        out.maxDurability = memory::callVirtualI<int>(
+            static_cast<std::uint32_t>(maxDamageIndex), item);
+        // A bad vtable index returns whatever was in the register. Anything
+        // outside the plausible range is discarded rather than rendered as a
+        // confident, wrong durability bar.
+        if (out.maxDurability < 0 || out.maxDurability > 10000) out.maxDurability = 0;
+    }
     return out;
 }
 
-ItemStack GameSDK::heldItem() const {
+void* GameSDK::rawHotbarStack(int slot) const {
     auto* lp = localPlayer();
-    if (!lp) return {};
+    if (!lp) return nullptr;
 
     auto& sigs = SignatureManager::get();
 
     void* supplies = deref(lp, sigs.offset("Player::supplies"));
-    if (!supplies) return {};
+    if (!supplies) return nullptr;
 
     void* inventory = deref(supplies, sigs.offset("PlayerInventory::inventory"));
-    if (!inventory) return {};
+    if (!inventory) return nullptr;
 
-    const int slot = memory::memberAt<int>(supplies, sigs.offset("PlayerInventory::selectedSlot"));
-    if (slot < 0 || slot > 8) return {};   // hotbar only
+    if (slot < 0) {
+        slot = memory::memberAt<int>(supplies, sigs.offset("PlayerInventory::selectedSlot"));
+    }
+    if (slot < 0 || slot > 8) return nullptr;   // hotbar only
 
-    // Inventory::getItem is virtual. Calling it beats walking the backing
-    // vector by hand: the game does its own bounds checking, and one vtable
-    // index is a far smaller thing to keep correct than a stride plus two
-    // container pointers.
     const auto index = static_cast<std::uint32_t>(sigs.offset("Inventory::getItemVIndex"));
-    void* stack = memory::callVirtualI<void*, int>(index, inventory, slot);
-    return readStack(stack);
+    return memory::callVirtualI<void*, int>(index, inventory, slot);
 }
 
-std::array<ItemStack, 4> GameSDK::armor() const {
-    std::array<ItemStack, 4> out{};
+void* GameSDK::rawArmorStack(int slot) const {
+    if (slot < 0 || slot > 3) return nullptr;
 
     auto* lp = localPlayer();
-    if (!lp) return out;
+    if (!lp) return nullptr;
 
     auto& sigs = SignatureManager::get();
 
-    // Armor lives in an ECS component, so it is reached through the game's own
-    // entt registry rather than a fixed Actor offset. See EntityComponents.h
-    // for why this is the most layout-sensitive read in the SDK.
     const auto ctxOff = sigs.offset("Actor::entityContext");
-    if (ctxOff == 0) return out;
+    if (ctxOff == 0) return nullptr;
 
     const auto& ctx = memory::memberAt<EntityContext>(lp, ctxOff);
-    if (!ctx.enttRegistry) return out;
+    if (!ctx.enttRegistry) return nullptr;
 
     const auto* equipment = ctx.enttRegistry->try_get<ActorEquipmentComponent>(ctx.entity);
-    if (!equipment || !equipment->armorContainer) return out;
+    if (!equipment || !equipment->armorContainer) return nullptr;
 
-    // Same virtual getItem as the player inventory: the game bounds-checks the
-    // slot for us, which matters more here because a bad index would otherwise
-    // run off the end of a container we never validated.
     const auto index = static_cast<std::uint32_t>(sigs.offset("Inventory::getItemVIndex"));
+    return memory::callVirtualI<void*, int>(index, equipment->armorContainer, slot);
+}
+
+float GameSDK::guiScaleFrac() const {
+    void* ci = clientInstance();
+    if (!ci) return 0.0f;
+
+    auto& sigs = SignatureManager::get();
+
+    void* guiData = deref(ci, sigs.offset("ClientInstance::guiData"));
+    if (!guiData) return 0.0f;
+
+    const float frac = memory::memberAt<float>(guiData, sigs.offset("GuiData::guiScaleFrac"));
+    // GUI scale is 1..4-ish, so the reciprocal lives in (0.25, 1]. Anything
+    // else means the offset is wrong, and drawing with it would put icons
+    // somewhere off-screen instead of visibly failing.
+    if (!std::isfinite(frac) || frac <= 0.01f || frac > 1.0f) return 0.0f;
+    return frac;
+}
+
+// Inventory::getItem is virtual, and both of these go through it rather than
+// walking the backing vector by hand: the game does its own bounds checking,
+// and one vtable index is a far smaller thing to keep correct than a stride
+// plus two container pointers. See rawHotbarStack / rawArmorStack.
+ItemStack GameSDK::heldItem() const {
+    return readStack(rawHotbarStack(-1));
+}
+
+std::array<ItemStack, 4> GameSDK::armor() const {
+    // Armor lives in an ECS component, so each slot is reached through the
+    // game's own entt registry rather than a fixed Actor offset. See
+    // EntityComponents.h for why this is the most layout-sensitive read in the
+    // SDK. The registry walk repeats per slot; at four slots once a frame that
+    // is not worth the coupling of a batched variant.
+    std::array<ItemStack, 4> out{};
     for (int slot = 0; slot < 4; ++slot) {
-        void* stack = memory::callVirtualI<void*, int>(index, equipment->armorContainer, slot);
-        out[static_cast<std::size_t>(slot)] = readStack(stack);
+        out[static_cast<std::size_t>(slot)] = readStack(rawArmorStack(slot));
     }
     return out;
 }
