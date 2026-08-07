@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdio>
 #include <format>
 #include <mutex>
@@ -164,6 +165,23 @@ private:
 };
 
 } // namespace glacier
+
+// Logs the first time this line is reached and never again.
+//
+// For per-frame paths, where the useful question is "did execution ever get
+// this far" rather than "what happened this frame". A plain LOG_INFO in a
+// render callback emits thousands of lines a second and buries the answer;
+// these mark the stages a frame passes through, so the last one in the file
+// says how far the last frame got before the process died.
+#define LOG_ONCE(...)                                             \
+    do {                                                          \
+        static std::atomic<bool> glacierLoggedOnce_{ false };      \
+        if (!glacierLoggedOnce_.exchange(true,                     \
+                std::memory_order_relaxed)) {                      \
+            ::glacier::Logger::get().log(                          \
+                ::glacier::LogLevel::Trace, __VA_ARGS__);          \
+        }                                                          \
+    } while (0)
 
 #define LOG_TRACE(...) ::glacier::Logger::get().log(::glacier::LogLevel::Trace, __VA_ARGS__)
 #define LOG_INFO(...)  ::glacier::Logger::get().log(::glacier::LogLevel::Info,  __VA_ARGS__)

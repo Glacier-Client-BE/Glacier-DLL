@@ -186,6 +186,12 @@ private:
     // frame. Only touched from the frame thread that calls applyCursorState.
     bool m_menuWasOpen = false;
 
+    // Cached ClientInstance, mirroring Latite. See clientInstance() for why the
+    // fresh-every-call approach was a mistake rather than a safety measure.
+    // Atomic because both the render and logic threads resolve it.
+    mutable std::atomic<void*>         m_cachedInstance{ nullptr };
+    mutable std::atomic<std::uint64_t> m_cacheStamp{ 0 };
+
     std::atomic<int>           m_ping{ -1 };
     std::atomic<std::uint64_t> m_pingStamp{ 0 };
     std::atomic<int>           m_worldTime{ -1 };

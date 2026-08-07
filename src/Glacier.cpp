@@ -91,8 +91,12 @@ void Glacier::start(HMODULE self) {
         // when the overlay itself can't draw.
         FrameStats::get().onFrame();
 
+        LOG_ONCE("first Present callback");
+
         auto& gfx = ui::Renderer::get();
         if (!gfx.beginFrame(sc, dev, ctx)) return;
+
+        LOG_ONCE("first successful beginFrame");
 
         // Nothing of ours is drawn outside a world — no HUD over the main menu,
         // no menu where there is no player to configure. The frame is still
@@ -103,6 +107,8 @@ void Glacier::start(HMODULE self) {
             gfx.endFrame();
             return;
         }
+
+        LOG_ONCE("first frame with a live player — the world is loaded");
 
         // Reconcile the game's cursor grab against the menu, every frame, from
         // the game's own thread — the way Latite's ScreenManager::onUpdate
@@ -125,7 +131,11 @@ void Glacier::start(HMODULE self) {
         RenderEvent ev{ gfx.width(), gfx.height() };
         EventBus::get().publish(ev);
 
+        LOG_ONCE("first cursor reconcile survived");
+
         ModuleManager::get().renderAll();
+        LOG_ONCE("first module render pass survived");
+
         ui::Menu::get().render();
 
         // Hand this frame's item-icon requests to the game's UI pass, which

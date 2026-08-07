@@ -212,11 +212,30 @@ void GameSDK::installHooks() {
 ClientInstance* GameSDK::clientInstance() const {
     if (!m_resolved || !m_gameCoreGlobal) return nullptr;
 
+    // Cached, because Latite caches (`ClientInstance::get()` resolves once into
+    // a static and returns it forever), and because walking it is not the cheap
+    // three pointer reads the old comment here claimed: the last step is a
+    // lock-free read of a std::map the game mutates on world load.
+    //
+    // Doing that on every frame AND every 10ms logic tick meant ~200 traversals
+    // a second of the single most fragile structure Glacier touches, for a
+    // value that changes about twice a session.
+    //
+    // Where this deviates from Latite: it re-walks periodically instead of
+    // caching forever. Latite never invalidates, which leaves a dangling
+    // ClientInstance after a disconnect; refreshing occasionally keeps the
+    // 200x reduction while still noticing a world change.
+    constexpr std::uint64_t kCacheMs = 500;
+
+    const auto now = GetTickCount64();
+    if (void* cached = m_cachedInstance.load(std::memory_order_relaxed)) {
+        if (now - m_cacheStamp.load(std::memory_order_relaxed) < kCacheMs) {
+            return static_cast<ClientInstance*>(cached);
+        }
+    }
+
     auto& sigs = SignatureManager::get();
 
-    // Walked fresh each call rather than cached. The chain is three pointer
-    // reads — far cheaper than the class of bug you get from holding a stale
-    // ClientInstance across a world change or a disconnect.
     void* winMain = *reinterpret_cast<void**>(m_gameCoreGlobal);
     void* gameCore = deref(winMain, sigs.offset("WinMain::platformGameCore"));
     void* mcGame = deref(gameCore, sigs.offset("Platform_GameCore::minecraftGame"));
@@ -225,16 +244,37 @@ ClientInstance* GameSDK::clientInstance() const {
     // Entry 0 is the primary (local) instance. Guarded — see the comment on
     // readPrimaryInstance for why this specific read is the fragile one.
     GLACIER_ACTIVITY("reading the ClientInstance map");
-    return static_cast<ClientInstance*>(
-        readPrimaryInstance(mcGame, sigs.offset("MinecraftGame::clientInstances")));
+    void* instance = readPrimaryInstance(mcGame, sigs.offset("MinecraftGame::clientInstances"));
+
+    m_cachedInstance.store(instance, std::memory_order_relaxed);
+    m_cacheStamp.store(now, std::memory_order_relaxed);
+
+    LOG_ONCE("first ClientInstance resolved: {:#x}", reinterpret_cast<std::uintptr_t>(instance));
+    return static_cast<ClientInstance*>(instance);
 }
 
 LocalPlayer* GameSDK::localPlayer() const {
     void* ci = clientInstance();
     if (!ci || m_localPlayerVIndex < 0) return nullptr;
+
+    // getLocalPlayer's vtable index is a pinned literal (0x1F) carried from
+    // upstream and never verified against this build. A wrong index does not
+    // fault — it calls whatever function happens to sit in that slot, with the
+    // wrong signature, which corrupts the stack and kills the process with no
+    // catchable exception. That is indistinguishable from "it just crashed",
+    // so the address is logged once and the call is bracketed: if the log ends
+    // between these two lines, this is the bug.
+    LOG_ONCE("first getLocalPlayer call: ClientInstance @ {:#x}, vtable[{}] = {:#x}",
+             reinterpret_cast<std::uintptr_t>(ci), m_localPlayerVIndex,
+             reinterpret_cast<std::uintptr_t>((*static_cast<void***>(ci))[m_localPlayerVIndex]));
+
     GLACIER_ACTIVITY("calling ClientInstance::getLocalPlayer");
-    return memory::callVirtualI<LocalPlayer*>(
+    auto* player = memory::callVirtualI<LocalPlayer*>(
         static_cast<std::uint32_t>(m_localPlayerVIndex), ci);
+
+    LOG_ONCE("first getLocalPlayer returned {:#x}",
+             reinterpret_cast<std::uintptr_t>(player));
+    return player;
 }
 
 std::optional<Vec3> GameSDK::playerPosition() const {
