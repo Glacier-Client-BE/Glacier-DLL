@@ -110,6 +110,54 @@ actually exists.
 **Phase 5's real progress metric is this table**, not module count — the modules
 are mechanical once their signatures resolve.
 
+## Keeping this in sync
+
+`src/memory/Signatures.cpp` is **generated**. Do not hand-edit it.
+
+```bash
+python tools/sync_signatures.py
+```
+
+It regenerates the table from [Latite](https://github.com/LatiteClient/Latite),
+which actively supports this build. A scheduled workflow
+(`.github/workflows/sync-signatures.yml`) runs it daily and opens a PR when
+anything changes — deliberately a PR, not a push, because signature changes
+steer memory reads inside another process and deserve a human reading the diff.
+
+The mapping in the script is explicit on both sides, so an upstream rename
+produces a loud failure and writes nothing, rather than silently dropping the
+entry whose feature then quietly stops working.
+
+**A green sync PR is not verification.** It proves the table compiles, not that
+the values are right for your game. Entries stay ⚠️ inherited until someone
+injects and confirms.
+
+## Armor, and the entt pin
+
+Armor is the one piece of data with no signature or offset of its own. It lives
+in an `ActorEquipmentComponent` inside Bedrock's entt registry, reached via
+`Actor::entityContext`.
+
+That makes `third_party/entt` load-bearing. It is a submodule pinned to commit
+`fe8d7d78` — the exact commit Latite uses — because the lookup requires our
+entt to agree bit-for-bit with the game's: entity-id bit layout, sparse-set
+page sizes, storage type. A different entt version still compiles and still
+appears to work, right up until it indexes the wrong page and hands back a
+component belonging to another entity.
+
+If armor ever shows plausible-but-wrong values (rather than nothing), suspect
+this pin before suspecting any offset.
+
+### Alternative route, not taken
+
+Molang queries (`query.armor_texture_slot`, `query.armor_damage_slot`) expose
+armor state too, and would sidestep entt entirely. They were not used here
+because evaluating Molang needs the interpreter plus a live render context, and
+they surface *rendering* state — which texture, which damage tier — rather than
+the `ItemStack` the HUD wants for counts and durability. Worth revisiting if the
+entt pin becomes a maintenance problem, or for drawing real armor icons, which
+the component route cannot do.
+
 ## When these stop working
 
 A game update moves code, and patterns stop matching. The symptom is explicit:
