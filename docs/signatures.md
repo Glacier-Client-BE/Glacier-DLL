@@ -24,14 +24,35 @@ independently derived by this project. That is why Glacier is AGPLv3; see
 Nothing is marked ✅ until someone has injected a build and watched the feature
 work. Compiling is not confirmation.
 
-## Phase 1 — seeded
+## Seeded
 
 | Name | Kind | Purpose | Attach-blocking | Status |
 |---|---|---|---|---|
 | `ClientInstance::update` | signature | Hooked to capture the live `ClientInstance` each tick | **yes** | ⚠️ inherited |
 | `ClientInstance::getLocalPlayerIndex` | signature | Call site whose displacement encodes `getLocalPlayer`'s vtable index | **yes** | ⚠️ inherited |
 | `Options::getGamma` | signature | Hooked by Fullbright to return an override brightness | no | ⚠️ inherited |
-| `Actor::position` | offset `0x44` | `Vec3` of an entity's feet | no | ⚠️ inherited |
+| `ItemStack::getMaxDamage` | signature | Called for durability bars | no | ⚠️ inherited |
+| `Actor::position` | offset `0x44` | `Vec3` of an entity's feet — Coordinates | no | ⚠️ inherited |
+| `Actor::armorContainer` | offset `0x1670` | Armor HUD | no | ⚠️ inherited |
+| `Player::supplies` | offset `0x9B8` | `PlayerInventory*` — held item | no | ⚠️ inherited |
+| `PlayerInventory::container` | offset `0x70` | Hotbar + main container | no | ⚠️ inherited |
+| `PlayerInventory::selectedSlot` | offset `0x10` | Which hotbar slot is held | no | ⚠️ inherited |
+| `Container::begin` / `Container::end` | offsets `0x00` / `0x08` | `std::vector<ItemStack>` bounds | no | ⚠️ inherited |
+| `ItemStack::stride` | offset `0x88` | Slot stride within a container | no | ⚠️ inherited |
+| `ItemStack::item` / `count` / `auxValue` | offsets `0x08` / `0x20` / `0x22` | Slot contents | no | ⚠️ inherited |
+
+### Which modules need which
+
+| Module | Needs | If it breaks |
+|---|---|---|
+| Watermark, FPS Counter, Keystrokes, CPS Counter | **nothing** | Can only break if the overlay itself is broken |
+| Fullbright | `Options::getGamma` | Toggling does nothing; logs a warning on enable |
+| Coordinates | `ClientInstance::*`, `Actor::position` | Shows `XYZ --`, or numbers that don't track movement |
+| Armor HUD | the container + `ItemStack` offsets | Empty slots while armoured, or nonsense counts |
+
+Coordinates is the cheapest end-to-end check of the SDK: if it tracks your
+movement, the whole signature → hook → `ClientInstance` → `LocalPlayer` chain
+works. Check it before debugging anything else.
 
 Attach-blocking entries cause `GameSDK::resolve()` to refuse the attach rather
 than continue into undefined behaviour. Non-blocking ones degrade the single
@@ -45,22 +66,19 @@ actually exists.
 
 | Name | Kind | Needed for | Phase |
 |---|---|---|---|
-| `GameMode::attack` | signature | Hit Ping, Reach Display | 3 |
-| `RakPeer::GetAveragePing` | signature | Ping display | 3 |
-| `TimeChanger` | signature | Day Counter | 3 |
-| `Level::getRuntimeActorList` | signature | Hitboxes (entity enumeration) | 3 |
-| `BobHurt` | signature | Java View Bobbing | 3 |
-| `MinimalViewBobbing` | signature | Minimal View Bobbing (NOP patch site) | 3 |
-| `ForceCoordsOption` | signature | Force Coords | 3 |
-| `AppPlatform::readAssetFile` | signature | Material Bin Loader | 3 |
-| `LocalPlayer::applyTurnDelta` | signature | Snap Look | 3 |
-| `ItemStack::getMaxDamage` | signature | Durability bars in HUDs | 3 |
-| `Inventory::addItem` | signature | Container manipulation reference | 3 |
-| `Player::supplies`, `PlayerInventory::*`, `Actor::armorContainer` | offsets | Armor / Inventory HUDs | 3 |
-| `GameRenderer::viewMatrix`, `GameRenderer::projMatrix`, `LevelRenderer*`, `GuiData::screenSize` | offsets | World→screen projection for Hitboxes | 3 |
-| `ClientInstance::minecraftGame`, `guiData`, `levelRenderer`, `camera`, `packetSender` | offsets | Various | 3 |
+| `GameMode::attack` | signature | Hit Ping, Reach Display | 5 |
+| `RakPeer::GetAveragePing` | signature | Ping display | 5 |
+| `TimeChanger` | signature | Day Counter | 5 |
+| `Level::getRuntimeActorList` | signature | Hitboxes (entity enumeration) | 5 |
+| `BobHurt` | signature | Java View Bobbing | 5 |
+| `MinimalViewBobbing` | signature | Minimal View Bobbing (NOP patch site) | 5 |
+| `ForceCoordsOption` | signature | Force Coords | 5 |
+| `AppPlatform::readAssetFile` | signature | Material Bin Loader | 5 |
+| `LocalPlayer::applyTurnDelta` | signature | Snap Look | 5 |
+| `GameRenderer::viewMatrix`, `GameRenderer::projMatrix`, `LevelRenderer*`, `GuiData::screenSize` | offsets | World→screen projection for Hitboxes | 5 |
+| `ClientInstance::minecraftGame`, `guiData`, `levelRenderer`, `camera`, `packetSender` | offsets | Various | 5 |
 
-**Phase 3's real progress metric is this table**, not module count — the modules
+**Phase 5's real progress metric is this table**, not module count — the modules
 are mechanical once their signatures resolve.
 
 ## When these stop working

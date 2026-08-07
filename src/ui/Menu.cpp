@@ -1,5 +1,6 @@
 #include "Menu.h"
 
+#include "HudEditor.h"
 #include "Input.h"
 #include "../module/ModuleManager.h"
 #include "../util/Logger.h"
@@ -63,10 +64,14 @@ std::string keyName(int vk) {
 
 void Menu::setOpen(bool open) {
     m_open = open;
+    // HUD widgets are only draggable while the menu is up — otherwise a click
+    // during normal play would move them.
+    HudEditor::get().setActive(open);
     if (!open) {
         // Drop any in-flight interaction, or it resumes when the menu reopens.
         m_capturingModule = nullptr;
         m_draggingSetting = nullptr;
+        m_draggingChannel = -1;
     }
     Input::get().reset();
 }
@@ -250,9 +255,14 @@ void Menu::drawSettings(Module& module, Rect& cursor, float width) {
                            kText, 12.0f, TextAlign::Right);
                 break;
             }
+            case SettingType::Color: {
+                const Rect swatch{ row.right() - 54.0f, row.y + 5.0f, 44.0f, 18.0f };
+                cursor.y += widgetColor(swatch, setting, width);
+                break;
+            }
             case SettingType::Key:
                 // Per-setting keybinds aren't used yet; the module-level bind
-                // above covers Phase 2. Drawn as a plain value so a module that
+                // above covers this. Drawn as a plain value so a module that
                 // declares one isn't silently ignored.
                 r.drawText(keyName(setting.asInt()),
                            Rect{ row.right() - 110.0f, row.y, 100.0f, row.h },
@@ -309,6 +319,75 @@ bool Menu::widgetSlider(const Rect& r, Setting& setting) {
         (active || hovered(grab)) ? Color::rgba(0xFFFFFFFF) : Color::rgba(0xFFD8DCE4));
 
     return active;
+}
+
+float Menu::widgetColor(const Rect& swatch, Setting& setting, float rowWidth) {
+    auto& gfx = Renderer::get();
+    auto& in  = Input::get();
+
+    // Checkerboard behind the swatch so a low-alpha color reads as translucent
+    // rather than as a dark color.
+    constexpr float kCheck = 4.5f;
+    for (int i = 0; i * kCheck < swatch.w; ++i) {
+        for (int j = 0; j * kCheck < swatch.h; ++j) {
+            if (((i + j) & 1) == 0) continue;
+            const float cw = std::min(kCheck, swatch.w - i * kCheck);
+            const float ch = std::min(kCheck, swatch.h - j * kCheck);
+            gfx.fillRect(Rect{ swatch.x + i * kCheck, swatch.y + j * kCheck, cw, ch },
+                         Color::rgba(0xFF4A4F58));
+        }
+    }
+    gfx.fillRoundedRect(swatch, 3.0f, Color::rgba(setting.asColor()));
+    gfx.strokeRoundedRect(swatch, 3.0f,
+                          hovered(swatch) ? kAccent : Color::rgba(0xFF555C68), 1.0f);
+
+    if (clicked(swatch)) {
+        m_expandedColor = (m_expandedColor == &setting) ? nullptr : &setting;
+    }
+    if (m_expandedColor != &setting) return 0.0f;
+
+    // Expanded: one slider per channel. Sliders are drawn below the swatch row,
+    // so the caller must be told how much vertical space they consumed.
+    static constexpr const char* kNames[4] = { "A", "R", "G", "B" };
+    float consumed = 0.0f;
+
+    for (int ch = 0; ch < 4; ++ch) {
+        const float y = swatch.bottom() + 8.0f + static_cast<float>(ch) * 20.0f;
+        const Rect track{ swatch.x - 150.0f, y, 160.0f, 5.0f };
+
+        gfx.drawText(kNames[ch], Rect{ track.x - 16.0f, y - 8.0f, 14.0f, 20.0f },
+                     kTextDim, 11.0f);
+
+        const Rect grab{ track.x, track.y - 8.0f, track.w, track.h + 16.0f };
+        if (in.leftPressed() && hovered(grab) && m_draggingChannel < 0) {
+            m_draggingChannel = ch;
+            m_expandedColor = &setting;
+        }
+        if (!in.leftDown() && m_draggingChannel == ch) {
+            m_draggingChannel = -1;
+        }
+        if (m_draggingChannel == ch && track.w > 0.0f) {
+            const float t = std::clamp((in.mouseX() - track.x) / track.w, 0.0f, 1.0f);
+            setting.setChannel(ch, static_cast<int>(t * 255.0f + 0.5f));
+        }
+
+        const float t = static_cast<float>(setting.channel(ch)) / 255.0f;
+        gfx.fillRoundedRect(track, track.h * 0.5f, kTrack);
+        gfx.fillRoundedRect(Rect{ track.x, track.y, track.w * t, track.h },
+                            track.h * 0.5f, kAccent);
+        gfx.fillRoundedRect(
+            Rect{ track.x + track.w * t - 5.0f, track.y - 3.5f, 10.0f, 12.0f },
+            5.0f, Color::rgba(0xFFFFFFFF));
+
+        gfx.drawText(std::to_string(setting.channel(ch)),
+                     Rect{ track.right() + 8.0f, y - 8.0f, 34.0f, 20.0f },
+                     kText, 11.0f, TextAlign::Right);
+
+        consumed += 20.0f;
+    }
+
+    (void)rowWidth;
+    return consumed + 12.0f;
 }
 
 bool Menu::widgetKeybind(const Rect& r, Module& module) {

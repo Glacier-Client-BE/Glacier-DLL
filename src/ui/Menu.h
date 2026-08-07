@@ -44,6 +44,9 @@ private:
     bool widgetToggle(const Rect& r, bool value);
     bool widgetSlider(const Rect& r, Setting& setting);
     bool widgetKeybind(const Rect& r, Module& module);
+    // Returns the extra vertical space consumed by the expanded channel sliders
+    // (0 when collapsed), so the caller can advance its layout cursor.
+    float widgetColor(const Rect& swatch, Setting& setting, float rowWidth);
 
     bool hovered(const Rect& r) const;
     bool clicked(const Rect& r) const;
@@ -62,6 +65,13 @@ private:
     // The slider currently being dragged. Tracked explicitly so dragging keeps
     // working when the cursor leaves the slider's rectangle mid-drag.
     Setting* m_draggingSetting = nullptr;
+
+    // The color swatch whose channel sliders are expanded.
+    Setting* m_expandedColor = nullptr;
+
+    // Channel index (0=A,1=R,2=G,3=B) currently being dragged, -1 for none.
+    // Channels can't reuse m_draggingSetting because all four share one Setting.
+    int m_draggingChannel = -1;
 };
 
 } // namespace glacier::ui

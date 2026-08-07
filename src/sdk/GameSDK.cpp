@@ -37,6 +37,10 @@ float __fastcall hkGetGamma(void* self) {
     return ov >= 0.0f ? ov : real;
 }
 
+// ItemStack::getMaxDamage(ItemStack*) -> int. Called directly, not hooked.
+using GetMaxDamageFn = int(__fastcall*)(void*);
+GetMaxDamageFn p_getMaxDamage = nullptr;
+
 } // namespace
 
 bool GameSDK::resolve() {
@@ -64,6 +68,9 @@ bool GameSDK::resolve() {
         return false;
     }
     LOG_INFO("getLocalPlayer vtable index = {}", m_localPlayerVIndex);
+
+    // Optional: durability bars degrade to "no bar" without it.
+    p_getMaxDamage = reinterpret_cast<GetMaxDamageFn>(sigs.sig("ItemStack::getMaxDamage"));
 
     // Without the capture hook target we can never reach the player at all.
     if (!sigs.sig("ClientInstance::update")) {
@@ -122,6 +129,70 @@ void GameSDK::setGammaOverride(float gamma) {
 
 bool GameSDK::gammaHookActive() const {
     return o_getGamma != nullptr;
+}
+
+// ─── Containers ──────────────────────────────────────────────────────────────
+
+ItemStack GameSDK::readSlot(std::uintptr_t containerBase, int index) const {
+    ItemStack stack;
+    if (!containerBase || index < 0) return stack;
+
+    auto& sigs = SignatureManager::get();
+    const auto stride = sigs.offset("ItemStack::stride");
+    if (stride <= 0) return stack;
+
+    // A Bedrock container is a contiguous std::vector<ItemStack>: read the
+    // [begin, end) pointers, bounds-check, then index by stride. Every offset
+    // comes from the registry — see the containment rule in Signatures.cpp.
+    const auto begin = *reinterpret_cast<std::uintptr_t*>(
+        containerBase + sigs.offset("Container::begin"));
+    const auto end = *reinterpret_cast<std::uintptr_t*>(
+        containerBase + sigs.offset("Container::end"));
+    if (!begin || begin >= end) return stack;
+
+    const auto slots = static_cast<std::ptrdiff_t>((end - begin) / static_cast<std::uintptr_t>(stride));
+    if (index >= slots) return stack;
+
+    const auto slot = begin + static_cast<std::uintptr_t>(index) * static_cast<std::uintptr_t>(stride);
+    const auto item = *reinterpret_cast<std::uintptr_t*>(slot + sigs.offset("ItemStack::item"));
+    if (!item) return stack;   // empty slot (air)
+
+    stack.valid  = true;
+    stack.count  = *reinterpret_cast<std::uint8_t*>(slot + sigs.offset("ItemStack::count"));
+    stack.damage = *reinterpret_cast<std::int16_t*>(slot + sigs.offset("ItemStack::auxValue"));
+    if (p_getMaxDamage) {
+        stack.maxDurability = p_getMaxDamage(reinterpret_cast<void*>(slot));
+    }
+    return stack;
+}
+
+std::array<ItemStack, 4> GameSDK::armor() const {
+    std::array<ItemStack, 4> out{};
+    auto* lp = localPlayer();
+    if (!lp) return out;
+
+    const auto off = SignatureManager::get().offset("Actor::armorContainer");
+    if (off == 0) return out;
+
+    const auto base = reinterpret_cast<std::uintptr_t>(lp) + off;
+    for (int i = 0; i < 4; ++i) out[i] = readSlot(base, i);
+    return out;
+}
+
+ItemStack GameSDK::heldItem() const {
+    auto* lp = localPlayer();
+    if (!lp) return {};
+
+    auto& sigs = SignatureManager::get();
+    const auto suppliesOff = sigs.offset("Player::supplies");
+    if (suppliesOff == 0) return {};
+
+    const auto supplies = memory::memberAt<std::uintptr_t>(lp, suppliesOff);
+    if (!supplies) return {};
+
+    const auto selected = memory::memberAt<int>(
+        reinterpret_cast<void*>(supplies), sigs.offset("PlayerInventory::selectedSlot"));
+    return readSlot(supplies + sigs.offset("PlayerInventory::container"), selected);
 }
 
 } // namespace glacier::sdk

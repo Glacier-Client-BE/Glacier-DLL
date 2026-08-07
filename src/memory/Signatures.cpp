@@ -65,11 +65,37 @@ void SignatureManager::seedBedrock() {
     addSignature("Options::getGamma",
         "48 83 EC 28 48 8B 01 48 8D 54 24 30 41 B8 36 00 00 00");
 
+    // ItemStack::getMaxDamage(ItemStack*) -> int. Called (not hooked) to fill in
+    // durability bars. Optional: without it, bars simply don't render.
+    addSignature("ItemStack::getMaxDamage",
+        "48 83 EC ? 48 8B 51 ? 33 C0 48 85 D2 74 ? 48 39 02 0F 95 C1");
+
     // ── Offsets ──
 
     // Actor::position — Vec3 of the entity's feet. Carried from 1.21.5x and not
     // overridden through 1.26.
     addOffset("Actor::position", 0x44);
+
+    // ── Player containers (armor + inventory HUDs) ──
+    // These move between builds more often than anything else here; treat them
+    // as the first suspects when a HUD shows nonsense rather than nothing.
+    addOffset("Actor::armorContainer",         0x1670);
+    addOffset("Player::supplies",              0x9B8);   // -> PlayerInventory*
+    addOffset("PlayerInventory::container",    0x70);    // hotbar + main
+    addOffset("PlayerInventory::selectedSlot", 0x10);
+
+    // ── ItemStack memory layout ──
+    // A Bedrock container is a contiguous std::vector<ItemStack>: the container
+    // base holds [begin, end) pointers, and slots are indexed by stride.
+    // Registered as named offsets rather than inlined in GameSDK so that every
+    // build-specific number in the project stays inside this one file — see the
+    // containment rule in docs/acknowledgements.md.
+    addOffset("Container::begin",        0x00);
+    addOffset("Container::end",          0x08);
+    addOffset("ItemStack::stride",       0x88);
+    addOffset("ItemStack::item",         0x08);   // Item*; null == air
+    addOffset("ItemStack::count",        0x20);   // uint8
+    addOffset("ItemStack::auxValue",     0x22);   // int16, used as damage
 }
 
 } // namespace glacier::memory

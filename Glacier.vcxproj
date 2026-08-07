@@ -86,6 +86,12 @@
     <ClCompile Include="src\module\modules\Watermark.cpp" />
     <ClCompile Include="src\ui\Renderer.cpp" />
     <ClCompile Include="src\ui\Menu.cpp" />
+    <ClCompile Include="src\ui\HudEditor.cpp" />
+    <ClCompile Include="src\module\modules\FpsCounter.cpp" />
+    <ClCompile Include="src\module\modules\Keystrokes.cpp" />
+    <ClCompile Include="src\module\modules\CpsCounter.cpp" />
+    <ClCompile Include="src\module\modules\Coordinates.cpp" />
+    <ClCompile Include="src\module\modules\ArmorHud.cpp" />
   </ItemGroup>
 
   <ItemGroup>
@@ -105,6 +111,8 @@
     <ClInclude Include="src\ui\Renderer.h" />
     <ClInclude Include="src\ui\Menu.h" />
     <ClInclude Include="src\ui\Input.h" />
+    <ClInclude Include="src\ui\HudEditor.h" />
+    <ClInclude Include="src\util\FrameStats.h" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -8,6 +8,7 @@
 #include "ui/Input.h"
 #include "ui/Menu.h"
 #include "ui/Renderer.h"
+#include "util/FrameStats.h"
 #include "util/Logger.h"
 
 #include <windowsx.h>
@@ -54,6 +55,10 @@ void Glacier::start(HMODULE self) {
 
     auto& d3d = D3DHook::get();
     d3d.onPresent([](IDXGISwapChain* sc, ID3D11Device* dev, ID3D11DeviceContext* ctx) {
+        // Sampled before the early-out so the frame rate stays accurate even
+        // when the overlay itself can't draw.
+        FrameStats::get().onFrame();
+
         auto& gfx = ui::Renderer::get();
         if (!gfx.beginFrame(sc, dev, ctx)) return;
 

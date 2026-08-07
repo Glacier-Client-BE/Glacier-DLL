@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <variant>
 
@@ -9,7 +10,7 @@
 // glue code, which is what keeps adding a module a one-file change.
 namespace glacier {
 
-enum class SettingType { Bool, Float, Int, Key };
+enum class SettingType { Bool, Float, Int, Key, Color };
 
 class Setting {
 public:
@@ -32,6 +33,28 @@ public:
     Setting(std::string id, std::string label, KeyTag, int vk)
         : m_id(std::move(id)), m_label(std::move(label)),
           m_type(SettingType::Key), m_value(vk) {}
+
+    // Color, stored as 0xAARRGGBB in the int slot. Tagged rather than inferred
+    // so the menu renders a swatch and channel sliders instead of a number.
+    struct ColorTag {};
+    Setting(std::string id, std::string label, ColorTag, std::uint32_t argb)
+        : m_id(std::move(id)), m_label(std::move(label)),
+          m_type(SettingType::Color), m_value(static_cast<int>(argb)) {}
+
+    std::uint32_t asColor() const { return static_cast<std::uint32_t>(std::get<int>(m_value)); }
+    void setColor(std::uint32_t argb) { m_value = static_cast<int>(argb); }
+
+    // Channel accessors for the picker widget. 0=A, 1=R, 2=G, 3=B.
+    int channel(int index) const {
+        const std::uint32_t c = asColor();
+        return static_cast<int>((c >> (8 * (3 - index))) & 0xFF);
+    }
+    void setChannel(int index, int value) {
+        value = value < 0 ? 0 : (value > 255 ? 255 : value);
+        const int shift = 8 * (3 - index);
+        const std::uint32_t cleared = asColor() & ~(0xFFu << shift);
+        setColor(cleared | (static_cast<std::uint32_t>(value) << shift));
+    }
 
     const std::string& id() const { return m_id; }
     const std::string& label() const { return m_label; }

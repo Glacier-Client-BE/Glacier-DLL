@@ -33,8 +33,18 @@ Rebuild in progress.
 | 0 | Project scaffold + CI | ✅ done |
 | 1 | Signature scanning, hooks, minimal SDK, Fullbright | ✅ compiles |
 | 2 | EventBus, HudModule, native Direct2D menu | ✅ compiles |
-| 3 | Visual/HUD/QoL module catalog + the offsets they need | next |
-| 4 | Theming, animation, release packaging | — |
+| 3a | Signature-free HUDs: FPS, Keystrokes, CPS, Watermark + colour settings and drag-to-move | ✅ compiles |
+| 3b | Signature-backed HUDs: Coordinates, Armor HUD | ✅ compiles |
+| 4 | Config persistence — settings survive a restart | next |
+| 5 | Remaining catalog: Zoom, FOV, Day Counter, Ping, Reach, Hitboxes, view-bobbing, Null Movement | — |
+| 6 | Theming, animation, blur, release packaging | — |
+
+**Phases 3a and 3b are split for a reason.** 3a modules touch no game memory at
+all — they read frame timings, key state, and click timestamps — so they work on
+*any* Bedrock build the overlay works on, and they can't break when the game
+updates. 3b modules read player containers through imported offsets, which are
+the entries most likely to break. Splitting them means a game update degrades
+half the HUD instead of all of it, and makes it obvious which half to fix.
 
 **"Compiles" is not "works."** CI proves the client builds; it cannot prove the
 imported signatures match your game build, or that the overlay composites

@@ -1,8 +1,10 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "../memory/Memory.h"
 
@@ -23,6 +25,25 @@ namespace glacier::sdk {
 struct Vec3 {
     float x = 0, y = 0, z = 0;
 };
+
+// One item slot read from a container. `valid` is false for an empty slot, so
+// callers never have to distinguish "air" from "couldn't read".
+struct ItemStack {
+    int  count         = 0;
+    int  damage        = 0;
+    int  maxDurability = 0;   // 0 == not damageable
+    bool valid         = false;
+
+    // Remaining durability as 0..1, or 1 when the item isn't damageable.
+    float durabilityFraction() const {
+        if (maxDurability <= 0) return 1.0f;
+        const float left = static_cast<float>(maxDurability - damage)
+                         / static_cast<float>(maxDurability);
+        return left < 0.0f ? 0.0f : (left > 1.0f ? 1.0f : left);
+    }
+};
+
+enum class ArmorSlot { Helmet = 0, Chestplate = 1, Leggings = 2, Boots = 3 };
 
 // Opaque game objects — only ever held as pointers.
 class ClientInstance;
@@ -63,8 +84,17 @@ public:
     // user why it is doing nothing instead of silently failing.
     bool gammaHookActive() const;
 
+    // ── Containers ──
+    // All return empty/invalid data rather than throwing when the player isn't
+    // in a world or the offsets didn't resolve, so HUD widgets can call them
+    // unconditionally every frame.
+    std::array<ItemStack, 4> armor() const;
+    ItemStack                heldItem() const;
+
 private:
     GameSDK() = default;
+
+    ItemStack readSlot(std::uintptr_t containerBase, int index) const;
 
     bool m_resolved = false;
 
