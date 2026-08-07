@@ -150,7 +150,9 @@ void Glacier::start(HMODULE self) {
     // Registered before initialize(): the first frame can arrive during it, and
     // this fires exactly once. attachToWindow is idempotent, so it does not
     // matter whether this or the provisional attach below runs first.
-    d3d.onWindowResolved([](HWND hwnd) { Glacier::get().attachToWindow(hwnd); });
+    // Stores only — the attach happens on the logic loop below. See
+    // requestWindowAttach for why doing it here deadlocks the game.
+    d3d.onWindowResolved([](HWND hwnd) { Glacier::get().requestWindowAttach(hwnd); });
 
     // Not fatal: without the render hook the client still ticks and keybinds
     // still work; only per-frame drawing is lost.
@@ -238,6 +240,11 @@ void Glacier::start(HMODULE self) {
             m_rightWasDown = r;
         }
 
+        // Re-attach if the first frame reported a different window than the
+        // pre-frame guess. Done here, on our own thread, because the calls it
+        // makes block on the game's message pump.
+        applyPendingWindowAttach();
+
         ModuleManager::get().tickAll();
         EventBus::get().publish<TickEvent>();
 
@@ -295,6 +302,12 @@ void Glacier::installWndProc(HWND hwnd) {
     m_origWndProc = reinterpret_cast<WNDPROC>(
         SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&Glacier::wndProc)));
     LOG_INFO("WndProc hooked");
+}
+
+void Glacier::applyPendingWindowAttach() {
+    if (HWND hwnd = m_pendingWindow.exchange(nullptr, std::memory_order_relaxed)) {
+        attachToWindow(hwnd);
+    }
 }
 
 void Glacier::attachToWindow(HWND hwnd) {
