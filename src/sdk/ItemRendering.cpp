@@ -116,6 +116,28 @@ bool constructContextGuarded(void* context, void* screenContext,
     }
 }
 
+// Same reasoning, for walking uiRenderContext -> clientInstance -> screenContext
+// -> minecraftGame. These are raw pointer dereferences through imported offsets
+// against a pointer the game handed us — no different in kind from the
+// constructor call above, and just as capable of taking the whole game down if
+// an offset is wrong. Pointers and PODs only, same constraint as the others.
+bool readUiRenderContextGuarded(void* uiRenderContext, std::ptrdiff_t clientInstanceOffset,
+                                std::ptrdiff_t screenContextOffset,
+                                std::ptrdiff_t minecraftGameOffset,
+                                void** outClientInstance, void** outScreenContext,
+                                void** outMinecraftGame) {
+    __try {
+        *outClientInstance = memory::memberAt<void*>(uiRenderContext, clientInstanceOffset);
+        *outScreenContext = memory::memberAt<void*>(uiRenderContext, screenContextOffset);
+        if (!*outClientInstance || !*outScreenContext) return true;
+        *outMinecraftGame = *reinterpret_cast<void**>(
+            reinterpret_cast<std::uintptr_t>(*outClientInstance) + minecraftGameOffset);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 } // namespace
 
 void ItemRendering::installHooks() {
@@ -194,17 +216,21 @@ void ItemRendering::drawPending(void* uiRenderContext) {
     // anywhere in it reported the useless "Glacier was: (idle)".
     GLACIER_ACTIVITY("reading MinecraftUIRenderContext for item drawing");
 
-    void* clientInstance = memory::memberAt<void*>(
-        uiRenderContext, sigs.offset("MinecraftUIRenderContext::clientInstance"));
-    void* screenContext = memory::memberAt<void*>(
-        uiRenderContext, sigs.offset("MinecraftUIRenderContext::screenContext"));
+    void* clientInstance = nullptr;
+    void* screenContext = nullptr;
+    void* minecraftGame = nullptr;
+    if (!readUiRenderContextGuarded(
+            uiRenderContext, sigs.offset("MinecraftUIRenderContext::clientInstance"),
+            sigs.offset("MinecraftUIRenderContext::screenContext"),
+            sigs.offset("ClientInstance::minecraftGame"),
+            &clientInstance, &screenContext, &minecraftGame)) {
+        disableAfterFault("MinecraftUIRenderContext::clientInstance/screenContext/ClientInstance::minecraftGame");
+        return;
+    }
     LOG_ONCE("item draw context: cinst {:#x}, screenContext {:#x}",
              reinterpret_cast<std::uintptr_t>(clientInstance),
              reinterpret_cast<std::uintptr_t>(screenContext));
     if (!clientInstance || !screenContext) return;
-
-    void* minecraftGame = *reinterpret_cast<void**>(
-        reinterpret_cast<std::uintptr_t>(clientInstance) + sigs.offset("ClientInstance::minecraftGame"));
     if (!minecraftGame) return;
 
     const float frac = sdk.guiScaleFrac();
