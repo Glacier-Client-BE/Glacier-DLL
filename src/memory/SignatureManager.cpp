@@ -30,6 +30,12 @@ void SignatureManager::addOffset(std::string name, std::ptrdiff_t offset) {
 }
 
 std::size_t SignatureManager::scanAll() {
+    // Two ranges, deliberately. Scanning happens in .text only — every
+    // signature names a function, so a hit anywhere else is a false positive
+    // that then gets hooked or called (this is what Selaura gets by handing
+    // ".text" to libhat). Containment checks still use the whole module,
+    // because a resolved *data* global legitimately lives outside .text.
+    const ModuleRange code = codeRange();
     const ModuleRange game = moduleRange();
     m_unresolved.clear();
 
@@ -50,10 +56,14 @@ std::size_t SignatureManager::scanAll() {
                  kTargetMajor, kTargetMinor, kTargetPatch);
     }
 
-    if (game.base == 0 || game.size == 0) {
-        LOG_ERROR("could not determine game module range — no signatures resolvable");
+    if (game.base == 0 || game.size == 0 || code.base == 0 || code.size == 0) {
+        LOG_ERROR("could not determine the game's code range — no signatures resolvable");
         return 0;
     }
+
+    LOG_INFO("scanning {:.1f} MB of .text (the full image is {:.1f} MB)",
+             static_cast<double>(code.size) / (1024.0 * 1024.0),
+             static_cast<double>(game.size) / (1024.0 * 1024.0));
 
     // Flatten the map into an indexable vector so worker threads can claim work
     // with a single atomic increment. Pointers stay valid: nothing mutates the
@@ -77,7 +87,7 @@ std::size_t SignatureManager::scanAll() {
             const std::size_t i = next.fetch_add(1, std::memory_order_relaxed);
             if (i >= work.size()) return;
 
-            if (auto hit = findSignature(work[i]->pattern, game)) {
+            if (auto hit = findSignature(work[i]->pattern, code)) {
                 // A call-site pattern still has to be followed to the function
                 // it references. A target that lands outside the module means
                 // the displacement was decoded from the wrong instruction, so

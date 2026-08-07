@@ -3,6 +3,7 @@
 #include <Psapi.h>
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 
 #pragma comment(lib, "Psapi.lib")
 
@@ -90,8 +91,31 @@ std::optional<std::uintptr_t> findSignature(std::string_view ida, const ModuleRa
     return std::nullopt;
 }
 
+ModuleRange codeRange(const wchar_t* moduleName) {
+    const HMODULE mod = GetModuleHandleW(moduleName);
+    if (!mod) return {};
+
+    const auto base = reinterpret_cast<std::uintptr_t>(mod);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return moduleRange(moduleName);
+
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return moduleRange(moduleName);
+
+    const auto* section = IMAGE_FIRST_SECTION(nt);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
+        if (std::memcmp(section->Name, ".text", 5) == 0) {
+            return ModuleRange{ base + section->VirtualAddress, section->Misc.VirtualSize };
+        }
+    }
+    return moduleRange(moduleName);
+}
+
 std::optional<std::uintptr_t> findSignature(std::string_view ida) {
-    return findSignature(ida, moduleRange());
+    // .text only — see the header. Every signature Glacier holds names a
+    // function, so a match outside executable code is a false positive by
+    // definition, and scanning for one is wasted work.
+    return findSignature(ida, codeRange());
 }
 
 std::uintptr_t resolveRelative(std::uintptr_t addressOfDisp, int dispOffset, int instructionLength) {

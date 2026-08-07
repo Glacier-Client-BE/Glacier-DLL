@@ -23,8 +23,22 @@ struct ModuleRange {
 };
 
 // Returns the in-memory range of a loaded module ("Minecraft.Windows.exe" when
-// passed nullptr -> the main executable).
+// passed nullptr -> the main executable). Spans every section, so this is the
+// right thing for "is this address part of the module" and the wrong thing for
+// scanning.
 ModuleRange moduleRange(const wchar_t* moduleName = nullptr);
+
+// Returns just the module's .text section — its executable code.
+//
+// This is what signature scanning must use, and what Selaura gets for free by
+// passing ".text" to libhat. Scanning the whole image instead is wrong in two
+// ways: a pattern can match bytes in .rdata or .data that were never
+// instructions, handing back an address that is then hooked or called; and it
+// wastes most of the work, since code is a small fraction of a ~100MB image.
+//
+// Falls back to the full module range if no .text section is found, which
+// should never happen for a normal PE.
+ModuleRange codeRange(const wchar_t* moduleName = nullptr);
 
 // Scans `range` for the first match of an IDA-style signature. "??" / "?" are
 // wildcards. Returns the absolute address of the match, or nullopt.
