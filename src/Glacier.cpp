@@ -103,13 +103,29 @@ void Glacier::start(HMODULE self) {
              ui::keyDisplayName(m_unloadKey), Config::path());
 
     // 6. Logic loop: module ticks + unload watch.
-    bool warnedNoFrames = false;
-    int  elapsedMs = 0;
+    bool warnedNoFrames  = false;
+    int  elapsedMs       = 0;
+    bool menuKeyWasDown  = false; // edge-detection: ignore repeat while held
 
     while (!m_shuttingDown.load()) {
         if (GetAsyncKeyState(m_unloadKey) & 0x8000) {
             requestShutdown();
             break;
+        }
+
+        // Poll menu keys here as a fallback for games (e.g. Bedrock) that route
+        // keyboard input through WM_INPUT / RawInput, which means WM_KEYDOWN
+        // never reaches our WndProc. GetAsyncKeyState bypasses the message queue
+        // entirely, so it works regardless of how the game reads its input.
+        // Edge-detection (was-down flag) prevents toggling repeatedly while held.
+        {
+            const bool menuDown = (GetAsyncKeyState(m_menuKey)    & 0x8000) ||
+                                  (GetAsyncKeyState(m_menuKeyAlt) & 0x8000);
+            if (menuDown && !menuKeyWasDown && !ui::Menu::get().capturingKey()) {
+                ui::Menu::get().toggle();
+                setCursorReleased(ui::Menu::get().open());
+            }
+            menuKeyWasDown = menuDown;
         }
 
         ModuleManager::get().tickAll();
