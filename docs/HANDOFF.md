@@ -359,6 +359,26 @@ being broken can be one shared input assumption. Before debugging a UI
 interaction bug here, confirm which window is hooked — the log line `game window
 corrected to 0x…` tells you it happened.
 
+## Never block the game's threads
+
+Two separate hangs came from Glacier blocking a game thread. Both looked like
+crashes, neither raised an exception, and neither was findable by reasoning
+about "what changed last".
+
+1. **Window text from inside `Present`.** `SetWindowText`/`GetWindowText` send
+   `WM_SETTEXT`/`WM_GETTEXT` *synchronously* to the thread owning the window
+   and block until it pumps. The game's main thread cannot pump while it waits
+   on the render thread — instant deadlock. Anything touching window state now
+   happens on Glacier's own logic thread; the D3D hook only records the handle.
+2. **A 1000 ms keyed-mutex timeout.** On the game's render thread, that turns
+   any mutex bug into one frame per second.
+
+The rule: **the Present hook and the ScreenView hook run on the game's threads.
+Nothing there may block, take a lock the game could hold, or send a window
+message.** Record what you need and let the logic loop act on it.
+
+A hang with no exception in the log is almost always this, not a bad pointer.
+
 ## Diagnosing a crash
 
 `CrashHandler` (installed first thing at attach) logs any access violation as:
