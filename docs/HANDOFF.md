@@ -86,9 +86,11 @@ These each cost a debugging cycle already. Don't re-derive them.
 
 ## Open bugs
 
-> **Status:** bugs 1–5 all have fixes committed, and **none are verified
-> in-game**. They compile; nobody has injected them yet. See § "Verifying
-> phases 6 and 7" at the end of this file for exactly what to check.
+> **Status:** bugs 1–5 all have fixes committed. Phase 6 and 7 were injected
+> once and **the game crashed after loading a world**; see § "The world-load
+> crash" below for the suspect and what it would take to confirm. Nothing else
+> in phases 6–7 has been observed working or failing yet — the crash happened
+> before any of it could be checked. See § "Verifying phases 6 and 7".
 
 ### 1. Menu can't be interacted with — BLOCKS EVERYTHING ELSE
 
@@ -308,6 +310,41 @@ drifted from `src/memory/Signatures.cpp` (it still lists entries such as
 `ClientInstance::update`, `GameMode::attack`, and `Container::begin` that the
 current generated table does not contain) — worth a pass.
 
+## The world-load crash
+
+**Symptom:** injected fine, then the game crashed after loading a world.
+
+**Suspect: the `ScreenView::setupAndRender` hook.** It was the only thing
+phase 7 added that runs unconditionally inside a world — `readStack`'s new
+virtual call needs Armor HUD enabled, and the cursor calls only fire on a menu
+toggle. It is also the least verifiable thing in the tree: the pattern matches
+a **call site**, and the function address is decoded from the displacement at
++1. If that decode lands on anything other than the intended function, calling
+through it with a two-argument signature corrupts the stack the first time the
+UI renders — which is exactly when a world finishes loading.
+
+**This is a hypothesis, not a confirmed diagnosis.** Nobody has read a crash
+address. What has changed is the blast radius:
+
+- Item icons are **off by default** (`itemIcons` under `[Glacier]`), and the
+  hook is not installed at all unless enabled. If the crash is gone with the
+  default config, the suspect is confirmed.
+- The two calls into game code are wrapped in structured-exception guards, so
+  a wrong address now disables the feature and logs which call faulted instead
+  of ending the session.
+
+**To confirm or refute, in order:**
+
+1. Run with defaults. Still crashes → it is **not** item rendering; the next
+   suspects are the `Platform_GameCore` deref move (`GameSDK::resolve` now
+   trusts the table's own deref instead of calling `offsetFromSig` itself) and
+   the new per-frame `inGame()` walk in the Present hook.
+2. No crash → set `itemIcons = true` and reload. If it now logs `item icons
+   disabled: '…' faulted`, the guard caught it and the named call is wrong.
+3. If it crashes *without* logging, the fault is somewhere the guards don't
+   cover — most likely the `BaseActorRenderContext` buffer being too small
+   (`0x500` is upstream's own admitted over-estimate, not a measured size).
+
 ## Verifying phases 6 and 7
 
 What changed, and what confirms each piece. All of this is unverified: CI only
@@ -320,7 +357,9 @@ proves it compiles.
 | 3 | `GameSDK::setCursorGrabbed` calls `ClientInstance::grabCursor` / `releaseCursor`; `Glacier::setCursorReleased` drives it and only falls back to `ShowCursor` when the call is unavailable. | With the menu open you should not be able to move or look. On attach, no `grabCursor/releaseCursor not resolved` warning in the console. |
 | 4 | Fullbright's gamma setting is now `15.0` default over a `0..25` range. | Enabling Fullbright at night, or in a cave, visibly brightens the world. |
 
-| 5 | `ItemRendering` hooks `ScreenView::setupAndRender` and replays icon requests inside the game's UI pass. Armor HUD submits one per slot. | Console shows `item rendering ready` at attach (rather than `item rendering unavailable — missing …`), and equipped armor shows real icons. |
+| 5 | `ItemRendering` hooks `ScreenView::setupAndRender` and replays icon requests inside the game's UI pass. Armor HUD submits one per slot. **Off by default** — see the crash section above. | With `itemIcons = true`: console shows `item rendering ready` at attach, and equipped armor shows real icons. |
+| — | HUD and menu render only when a `LocalPlayer` exists, matching Latite/Flarial. | Nothing of Glacier's is drawn on the main menu; `G`/`M` does nothing there. Both come back on entering a world. |
+| — | The game window is retitled to name the client and the **detected** build. | Title bar reads `Glacier Client for Minecraft: Bedrock Edition 1.26.40`. If the number differs from 1.26.40, that mismatch is the explanation for anything else behaving oddly. Unloading with `END` restores the original title. |
 | — | `readStack` now fills `maxDurability` via `Item::getMaxDamage` and reads damage through `ItemStackBase::getDamageValue`. | Durability bars appear under damaged armor and shrink as it wears. They have **never** drawn before this, so "no bars" is a failure, not the status quo. |
 
 Order of diagnosis if icons don't appear, cheapest first:
