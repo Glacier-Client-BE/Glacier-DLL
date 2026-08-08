@@ -95,6 +95,13 @@ void Menu::render() {
     };
     drawModuleList(list);
 
+    // Glacier's menu is a D2D overlay, not a real Bedrock screen — the game
+    // has no reason to draw its own cursor sprite for a UI it doesn't know
+    // exists, and Bedrock doesn't show the bare OS pointer either. Without
+    // this, the menu tracks the mouse internally (hover/click both work)
+    // but nothing on screen ever shows the player where it is.
+    drawCursor(in.mouseX(), in.mouseY());
+
     in.newFrame();
 }
 
@@ -261,6 +268,24 @@ void Menu::drawSettings(Module& module, Rect& cursor, float width) {
     }
 
     cursor.y += 6.0f;
+}
+
+void Menu::drawCursor(float x, float y) {
+    auto& r = Renderer::get();
+
+    // A small filled reticle rather than a proper arrow glyph — Renderer
+    // only has axis-aligned rect primitives, and a real pointer shape needs
+    // a filled polygon. This is a deliberately simple placeholder: the goal
+    // is "the player can see where they're about to click", which a dot
+    // solves completely, not a pixel-perfect Windows cursor.
+    constexpr float kRadius = 5.0f;
+    const Rect dot{ x - kRadius, y - kRadius, kRadius * 2.0f, kRadius * 2.0f };
+
+    // Dark outline first so the accent-colored fill stays visible against a
+    // bright backdrop or a light menu panel — the same shadow-then-fill
+    // order HUD text shadows use.
+    r.strokeRoundedRect(dot.inset(-1.5f), kRadius + 1.5f, Color::rgba(0xCC000000), 2.0f);
+    r.fillRoundedRect(dot, kRadius, kAccent);
 }
 
 bool Menu::widgetToggle(const Rect& r, bool value) {

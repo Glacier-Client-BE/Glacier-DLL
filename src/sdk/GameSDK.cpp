@@ -159,6 +159,10 @@ bool GameSDK::resolve() {
     if (!s_grabCursor || !s_releaseCursor) {
         LOG_WARN("ClientInstance::grabCursor/releaseCursor not resolved — the game will "
                  "keep receiving movement and look input while the menu is open");
+    } else {
+        // Resolving is not the same as working — see applyCursorState for the
+        // per-frame trace that actually confirms the call took effect.
+        LOG_INFO("ClientInstance::grabCursor/releaseCursor resolved");
     }
 
     // Optional too. Without it, durability falls back to the auxValue read,
@@ -333,10 +337,19 @@ void GameSDK::applyCursorState(bool menuOpen) {
         if (cursorGrabbed()) {
             GLACIER_ACTIVITY("calling ClientInstance::releaseCursor");
             s_releaseCursor(ci);
+            // Confirms the call actually changed the game's own flag, not
+            // just that it didn't crash. If this never prints "no", the
+            // signature resolved to something that isn't really
+            // releaseCursor for this build — same failure mode as the
+            // item-icon vptr bug, just on a different function.
+            LOG_ONCE("releaseCursor called — cursorGrabbed() now reports {}",
+                     cursorGrabbed() ? "still grabbed (did NOT take effect)" : "released (ok)");
         }
     } else if (m_menuWasOpen) {
         GLACIER_ACTIVITY("calling ClientInstance::grabCursor");
         s_grabCursor(ci);
+        LOG_ONCE("grabCursor called — cursorGrabbed() now reports {}",
+                 cursorGrabbed() ? "grabbed (ok)" : "still released (did NOT take effect)");
     }
     m_menuWasOpen = menuOpen;
 }

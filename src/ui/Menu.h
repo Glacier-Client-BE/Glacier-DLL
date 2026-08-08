@@ -52,6 +52,7 @@ private:
     void drawModuleList(const Rect& area);
     void drawModuleCard(Module& module, Rect& cursor, float width);
     void drawSettings(Module& module, Rect& cursor, float width);
+    void drawCursor(float x, float y);
 
     // Widgets. Each returns true if it changed the underlying value this frame.
     bool widgetToggle(const Rect& r, bool value);
