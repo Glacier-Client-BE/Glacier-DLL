@@ -120,6 +120,19 @@ public:
     // ClientInstance currently exists.
     bool cursorControlAvailable() const;
 
+    // False once a releaseCursor() call has been OBSERVED not to change
+    // cursorGrabbed() — i.e. the signature resolved but calling it didn't do
+    // what it's supposed to, the same failure mode as the item-icon vptr
+    // bug. Distinct from cursorControlAvailable(): that one only says the
+    // pattern matched something, not that the something is right. Starts
+    // true and latches false permanently for the session on the first
+    // observed failure, so Glacier::setCursorReleased's ShowCursor fallback
+    // can kick in without needing the signature to have failed to resolve
+    // at all.
+    bool cursorControlWorking() const {
+        return m_cursorControlWorking.load(std::memory_order_relaxed);
+    }
+
     // ── Instrumentation caches ──
     // Each is fed by a hook and read by exactly one HUD. All return a "no data"
     // sentinel rather than a stale value when the hook never fired, so a
@@ -223,6 +236,7 @@ private:
     // Previous menu state, so the grab fires once on close rather than every
     // frame. Only touched from the frame thread that calls applyCursorState.
     bool m_menuWasOpen = false;
+    std::atomic<bool> m_cursorControlWorking{ true };
 
     // Cached ClientInstance, mirroring Latite. See clientInstance() for why the
     // fresh-every-call approach was a mistake rather than a safety measure.

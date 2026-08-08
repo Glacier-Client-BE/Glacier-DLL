@@ -322,7 +322,11 @@ bool GameSDK::cursorGrabbed() const {
 }
 
 void GameSDK::applyCursorState(bool menuOpen) {
-    if (!cursorControlAvailable()) return;
+    // Once we've SEEN the call fail to do anything, stop trusting it and let
+    // Glacier::setCursorReleased's ShowCursor/ClipCursor fallback take over
+    // instead — better than calling a function every frame that's already
+    // been proven not to work.
+    if (!cursorControlAvailable() || !cursorControlWorking()) return;
 
     void* ci = clientInstance();
     if (!ci) {
@@ -337,13 +341,20 @@ void GameSDK::applyCursorState(bool menuOpen) {
         if (cursorGrabbed()) {
             GLACIER_ACTIVITY("calling ClientInstance::releaseCursor");
             s_releaseCursor(ci);
+
             // Confirms the call actually changed the game's own flag, not
-            // just that it didn't crash. If this never prints "no", the
-            // signature resolved to something that isn't really
-            // releaseCursor for this build — same failure mode as the
-            // item-icon vptr bug, just on a different function.
+            // just that it didn't crash. A signature can resolve to
+            // something that isn't really releaseCursor for this build —
+            // the same failure mode as the item-icon vptr bug — and still
+            // return cleanly without ever touching cursorGrabbed.
+            const bool stillGrabbed = cursorGrabbed();
             LOG_ONCE("releaseCursor called — cursorGrabbed() now reports {}",
-                     cursorGrabbed() ? "still grabbed (did NOT take effect)" : "released (ok)");
+                     stillGrabbed ? "still grabbed (did NOT take effect)" : "released (ok)");
+            if (stillGrabbed) {
+                LOG_WARN("ClientInstance::releaseCursor did not release the cursor — "
+                         "falling back to ShowCursor for the rest of this session");
+                m_cursorControlWorking.store(false, std::memory_order_relaxed);
+            }
         }
     } else if (m_menuWasOpen) {
         GLACIER_ACTIVITY("calling ClientInstance::grabCursor");

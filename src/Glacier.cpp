@@ -119,6 +119,13 @@ void Glacier::start(HMODULE self) {
         // hold and the player keeps moving behind the menu.
         sdk::GameSDK::get().applyCursorState(ui::Menu::get().open());
 
+        // Re-evaluated every frame, not just on the open/close edge: the
+        // failure that flips cursorControlWorking() to false is only ever
+        // observed mid-session, inside applyCursorState above, so the
+        // ShowCursor fallback needs a chance to engage on whichever frame
+        // that happens on — not just the one where the menu was toggled.
+        setCursorReleased(ui::Menu::get().open());
+
         // Sample the mouse before anything hit-tests it. Polled rather than
         // taken from WM_* messages because Bedrock consumes the mouse through
         // RawInput — see the comment on ui::Input. Only while the menu is open:
@@ -432,10 +439,16 @@ void Glacier::setCursorReleased(bool released) {
     // Present hook — the game re-grabs the cursor on its own, so this could
     // never have been a one-shot call from here.
     //
-    // What is left is the fallback for when the cursor signatures are missing
-    // entirely: at least give the user a visible pointer to click the menu
-    // with, even though the game will keep taking movement input.
-    if (sdk::GameSDK::get().cursorControlAvailable()) {
+    // What is left is the fallback for when the cursor signatures are either
+    // missing entirely, or resolved to something that doesn't actually work
+    // (cursorControlWorking() goes false the first time applyCursorState
+    // observes a releaseCursor() call that didn't change cursorGrabbed()).
+    // The second case is only detected mid-session, not at the moment this
+    // function is first called — which is why the Present hook calls this
+    // every frame the menu is open rather than only on the toggle edge, so
+    // the fallback engages within a frame or two of the failure, not only
+    // on the next open/close.
+    if (sdk::GameSDK::get().cursorControlAvailable() && sdk::GameSDK::get().cursorControlWorking()) {
         // If an earlier session had to fall back, undo it now so the OS cursor
         // counter doesn't drift permanently out of balance.
         if (!released && s_cursorFallback) {
@@ -445,10 +458,19 @@ void Glacier::setCursorReleased(bool released) {
         return;
     }
 
+    // Edge-triggered on s_cursorFallback, not level-triggered on `released`:
+    // this is now called every frame the menu is open (see the Present hook
+    // above), and ShowCursor's return value is its own running counter —
+    // calling ShowCursor(TRUE) again every frame after it's already visible
+    // would increment that counter without a matching decrement, and the
+    // eventual ShowCursor(FALSE) unwind loop would run far more times than
+    // it should to rebalance it.
     if (released) {
-        ClipCursor(nullptr);
-        while (ShowCursor(TRUE) < 0) {}
-        s_cursorFallback = true;
+        if (!s_cursorFallback) {
+            ClipCursor(nullptr);
+            while (ShowCursor(TRUE) < 0) {}
+            s_cursorFallback = true;
+        }
     } else if (s_cursorFallback) {
         while (ShowCursor(FALSE) >= 0) {}
         s_cursorFallback = false;
