@@ -215,8 +215,13 @@ bool Renderer::createTarget(IDXGISwapChain* swapChain) {
         // completely expected there. Try the D3D12 bridge before giving up.
         surface = createDx12WrappedSurface(swapChain);
         if (!surface) {
-            LOG_ERROR("could not get the back buffer as a DXGI surface (D3D11) or bridge it "
-                      "via D3D11On12 (D3D12): {:#x}", static_cast<unsigned>(hr));
+            // Once, not per frame. createTarget runs on every frame that has
+            // no target, so an unguarded log here emitted this line at the
+            // frame rate — which in a real log from a D3D12 machine drowned
+            // out the one warning that actually said why (no command queue).
+            warnOnce("could not get the back buffer as a DXGI surface (D3D11) or bridge it "
+                     "via D3D11On12 (D3D12) — the overlay cannot draw. The preceding warning "
+                     "names the reason; further occurrences are not logged");
             return false;
         }
     }
@@ -527,8 +532,12 @@ void Renderer::ensureIconFont() {
     if (ok) {
         m_iconCollection = collection;   // kept; released in shutdown()
         collection = nullptr;
-        LOG_INFO("icon font loaded from the embedded resource ('{}', {} bytes)",
-                 std::string(m_iconFamily.begin(), m_iconFamily.end()), size);
+        std::string family;
+        family.reserve(m_iconFamily.size());
+        for (const wchar_t c : m_iconFamily) {
+            family.push_back(c < 0x80 ? static_cast<char>(c) : '?');
+        }
+        LOG_INFO("icon font loaded from the embedded resource ('{}', {} bytes)", family, size);
     } else {
         LOG_WARN("embedded icon font failed to load — the menu will draw its own fallback marks");
         safeRelease(m_iconFont);

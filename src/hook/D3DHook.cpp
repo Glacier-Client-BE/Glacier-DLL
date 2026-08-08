@@ -139,48 +139,68 @@ bool D3DHook::initialize() {
     // releasing it after the first use only would make that a
     // use-after-free.
     IDXGIFactory2* factory2 = nullptr;
-    if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory2))) && factory2) {
+    const HRESULT factoryHr = CreateDXGIFactory1(IID_PPV_ARGS(&factory2));
+    if (SUCCEEDED(factoryHr) && factory2) {
         void** factoryVTable = *reinterpret_cast<void***>(factory2);
         hooks.create("IDXGIFactory2::CreateSwapChainForHwnd", factoryVTable[15],
                     &D3DHook::hkCreateSwapChainForHwnd, &s_originalCreateSwapChainForHwnd);
-
-        // The one that actually works: a throwaway D3D12 device + command
-        // queue, purely to read ID3D12CommandQueue's vtable — see the class
-        // comment. D3D12CreateDevice failing outright just means no D3D12
-        // device is available on this machine at all (the common case, since
-        // most systems still run Bedrock through D3D11), not worth a warning
-        // on its own; only warn if a device exists but the queue specifically
-        // couldn't be made, since that is the surprising failure.
-        IDXGIAdapter* adapter = nullptr;
-        if (SUCCEEDED(factory2->EnumAdapters(0, &adapter)) && adapter) {
-            ID3D12Device* device12 = nullptr;
-            if (SUCCEEDED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device12)))
-                && device12) {
-                D3D12_COMMAND_QUEUE_DESC qdesc{};
-                qdesc.Type  = D3D12_COMMAND_LIST_TYPE_DIRECT;
-                qdesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
-                ID3D12CommandQueue* probeQueue = nullptr;
-                if (SUCCEEDED(device12->CreateCommandQueue(&qdesc, IID_PPV_ARGS(&probeQueue)))
-                    && probeQueue) {
-                    void** queueVTable = *reinterpret_cast<void***>(probeQueue);
-                    hooks.create("ID3D12CommandQueue::ExecuteCommandLists", queueVTable[10],
-                                &D3DHook::hkExecuteCommandLists, &s_originalExecuteCommandLists);
-                    probeQueue->Release();
-                } else {
-                    LOG_WARN("could not create a probe D3D12 command queue — if the game "
-                             "renders through D3D12, the overlay will not appear (no command "
-                             "queue to bridge with)");
-                }
-                device12->Release();
-            }
-            adapter->Release();
-        }
-
         factory2->Release();
+    } else {
+        LOG_WARN("CreateDXGIFactory1 failed ({:#x}) — the secondary command-queue capture path "
+                 "is unavailable", static_cast<unsigned>(factoryHr));
     }
+
+    installCommandQueueHook();
 
     m_initialized = ok;
     return ok;
+}
+
+void D3DHook::installCommandQueueHook() {
+    // A throwaway D3D12 device + command queue, purely to read
+    // ID3D12CommandQueue's vtable — this is the capture path that actually
+    // works after the fact; see the class comment.
+    //
+    // Every step here logs. It used to sit inside the CreateDXGIFactory1
+    // block above and enumerate an adapter off that factory, with all three
+    // of "no factory", "no adapter" and "no D3D12 device" silent — so a D3D12
+    // machine where the overlay never appeared produced a log with simply
+    // nothing in it between the DXGI hooks and "WndProc hooked", and no way
+    // to tell which of the three had happened. A null adapter (the default
+    // one) removes the factory dependency entirely.
+    ID3D12Device* device12 = nullptr;
+    const HRESULT deviceHr =
+        D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device12));
+    if (FAILED(deviceHr) || !device12) {
+        // Expected and harmless on a machine with no D3D12 support at all,
+        // where the game must be running through D3D11 anyway. Said out loud
+        // regardless, because on a machine that IS running D3D12 this is the
+        // line that explains why the overlay never appeared.
+        LOG_WARN("no probe D3D12 device ({:#x}) — if this machine renders Bedrock through "
+                 "D3D12, the overlay cannot bridge onto it", static_cast<unsigned>(deviceHr));
+        return;
+    }
+
+    D3D12_COMMAND_QUEUE_DESC qdesc{};
+    qdesc.Type  = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    qdesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+
+    ID3D12CommandQueue* probeQueue = nullptr;
+    const HRESULT queueHr = device12->CreateCommandQueue(&qdesc, IID_PPV_ARGS(&probeQueue));
+    if (SUCCEEDED(queueHr) && probeQueue) {
+        // ID3D12CommandQueue vtable: [0..2] IUnknown, [3..7] ID3D12Object +
+        // ID3D12DeviceChild, [8] UpdateTileMappings, [9] CopyTileMappings,
+        // [10] ExecuteCommandLists.
+        void** queueVTable = *reinterpret_cast<void***>(probeQueue);
+        HookManager::get().create("ID3D12CommandQueue::ExecuteCommandLists", queueVTable[10],
+                                  &D3DHook::hkExecuteCommandLists, &s_originalExecuteCommandLists);
+        probeQueue->Release();
+    } else {
+        LOG_WARN("could not create a probe D3D12 command queue ({:#x}) — if the game renders "
+                 "through D3D12, the overlay will not appear (no command queue to bridge with)",
+                 static_cast<unsigned>(queueHr));
+    }
+    device12->Release();
 }
 
 void D3DHook::shutdown() {

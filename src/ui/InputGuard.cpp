@@ -5,6 +5,7 @@
 #include "../util/Logger.h"
 
 #include <atomic>
+#include <cstdint>
 #include <thread>
 
 namespace glacier::ui {
@@ -173,10 +174,18 @@ UINT WINAPI hkGetRawInputBuffer(PRAWINPUT data, PUINT size, UINT headerSize) {
     const UINT count = o_GetRawInputBuffer(data, size, headerSize);
     if (data && count != static_cast<UINT>(-1) && count > 0
         && g_menuOpen.load(std::memory_order_relaxed)) {
-        PRAWINPUT record = data;
+        auto* record = data;
         for (UINT i = 0; i < count; ++i) {
             neutralizeMouse(record);
-            record = NEXTRAWINPUTBLOCK(record);
+            // Open-coded NEXTRAWINPUTBLOCK. The SDK macro expands to
+            // RAWINPUT_ALIGN, which references QWORD — a type winnt.h does not
+            // define under this project's WIN32_LEAN_AND_MEAN/UNICODE
+            // configuration, so the macro simply does not compile here. The
+            // alignment it applies is 8 bytes on x64, which is what this does.
+            constexpr std::uintptr_t kAlign = sizeof(std::uint64_t);
+            const auto next = (reinterpret_cast<std::uintptr_t>(record) + record->header.dwSize
+                               + kAlign - 1) & ~(kAlign - 1);
+            record = reinterpret_cast<PRAWINPUT>(next);
         }
     }
     return count;

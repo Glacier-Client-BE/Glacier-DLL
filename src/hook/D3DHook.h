@@ -79,6 +79,13 @@ public:
 private:
     D3DHook() = default;
 
+    // Builds a throwaway D3D12 device + command queue to read
+    // ID3D12CommandQueue's vtable, and hooks ExecuteCommandLists on it. Split
+    // out of initialize() so each of its failure modes gets its own log line:
+    // on a D3D12 machine, whichever one fired is the whole explanation for an
+    // overlay that never appeared.
+    static void installCommandQueueHook();
+
     // Detours (defined in D3DHook.cpp).
     static HRESULT STDMETHODCALLTYPE hkPresent(IDXGISwapChain* sc, UINT sync, UINT flags);
     static HRESULT STDMETHODCALLTYPE hkResizeBuffers(IDXGISwapChain* sc, UINT count, UINT w, UINT h,
