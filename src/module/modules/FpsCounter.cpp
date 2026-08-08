@@ -1,4 +1,4 @@
-#include "../HudModule.h"
+#include "../TextHudModule.h"
 #include "../ModuleRegistry.h"
 #include "../../util/FrameStats.h"
 
@@ -8,33 +8,23 @@ namespace glacier {
 
 // Frame-rate readout. Needs no game signatures at all — it counts Present
 // calls — so it works on any Bedrock build the overlay itself works on.
-class FpsCounter final : public HudModule {
+class FpsCounter final : public TextHudModule {
 public:
     FpsCounter()
-        : HudModule("FPS Counter", "Shows the current frame rate",
+        : TextHudModule("FPS Counter", "Shows the current frame rate",
                     Category::Misc, 0,
                     0.01f, 0.05f, 0xFFFFFFFF) {
         addSetting(Setting{ "label", "Show \"FPS\" label", true });
         addSetting(Setting{ "colorcode", "Color by performance", false });
     }
 
-    ui::Rect writeHudBody(const ui::Rect& origin, float scale) override {
-        auto& r = ui::Renderer::get();
-
+    void buildLines(std::vector<Line>& out) override {
         const int fps = FrameStats::get().fps();
         std::string text = std::to_string(fps);
         if (const auto* s = setting("label"); s && s->asBool()) {
             text += " FPS";
         }
-
-        const float size = 16.0f * scale;
-        const float w = r.measureText(text, size, true);
-        const float h = size * 1.4f;
-
-        r.drawText(text, ui::Rect{ origin.x, origin.y, w + 4.0f, h },
-                   resolveColor(fps), size, ui::TextAlign::Left, true);
-
-        return ui::Rect{ origin.x, origin.y, w, h };
+        out.push_back(Line{ std::move(text), false, resolveColor(fps) });
     }
 
 private:

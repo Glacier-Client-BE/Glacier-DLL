@@ -59,6 +59,14 @@ struct Rect {
 
 enum class TextAlign { Left, Center, Right };
 
+// Text weight, replacing an earlier `bool bold`.
+//
+// The bool only offered Normal and SemiBold, and every HUD widget passed true —
+// which is why the HUD read as heavy and uniform. Small UI text wants Light or
+// Normal; SemiBold is for emphasis against it, not a default. Naming the weights
+// also makes a call site say what it wants instead of asserting "bold: yes".
+enum class FontWeight { Light, Normal, Medium, SemiBold };
+
 class Renderer {
 public:
     static Renderer& get() {
@@ -86,9 +94,22 @@ public:
     void fillRect(const Rect& r, const Color& c);
     void fillRoundedRect(const Rect& r, float radius, const Color& c);
     void strokeRoundedRect(const Rect& r, float radius, const Color& c, float thickness = 1.0f);
+    // `shadow` draws the string once in translucent black, offset a pixel down
+    // and right, before the real draw. HUD text sits over arbitrary game
+    // content — sky, snow, a white ceiling — and without it light text is
+    // simply illegible against a bright background. The game's own HUD does
+    // the same for exactly this reason.
     void drawText(std::string_view text, const Rect& box, const Color& c,
-                  float size = 14.0f, TextAlign align = TextAlign::Left, bool bold = false);
-    float measureText(std::string_view text, float size = 14.0f, bool bold = false);
+                  float size = 14.0f, TextAlign align = TextAlign::Left,
+                  FontWeight weight = FontWeight::Normal, bool shadow = false);
+    float measureText(std::string_view text, float size = 14.0f,
+                      FontWeight weight = FontWeight::Normal);
+
+    // Height of one line at `size`, from the font's own metrics rather than a
+    // guessed multiplier. Every widget used to hardcode `size * 1.4f` (or
+    // 1.35f — they disagreed), which is why lines in different widgets did not
+    // sit on a common rhythm.
+    float lineHeight(float size, FontWeight weight = FontWeight::Normal);
 
     void pushClip(const Rect& r);
     void popClip();
@@ -108,22 +129,22 @@ private:
     // as a member (not a function-local static) so shutdown() can release them.
     struct FormatKey {
         int  quarterSize;   // size * 4, so half-point sizes still key distinctly
-        bool bold;
+        FontWeight weight;
         TextAlign align;
         bool operator==(const FormatKey& o) const {
-            return quarterSize == o.quarterSize && bold == o.bold && align == o.align;
+            return quarterSize == o.quarterSize && weight == o.weight && align == o.align;
         }
     };
     struct FormatKeyHash {
         std::size_t operator()(const FormatKey& k) const noexcept {
-            return static_cast<std::size_t>(k.quarterSize) * 8
-                 + static_cast<std::size_t>(k.bold) * 4
+            return static_cast<std::size_t>(k.quarterSize) * 16
+                 + static_cast<std::size_t>(k.weight) * 4
                  + static_cast<std::size_t>(k.align);
         }
     };
     std::unordered_map<FormatKey, IDWriteTextFormat*, FormatKeyHash> m_formats;
 
-    IDWriteTextFormat* formatFor(float size, bool bold, TextAlign align);
+    IDWriteTextFormat* formatFor(float size, FontWeight weight, TextAlign align);
     void releaseFormats();
 
     // Everything below lives on the GAME's device. m_d2d and m_target both hold

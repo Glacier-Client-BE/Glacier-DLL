@@ -31,6 +31,20 @@ public:
         addSetting(Setting{ "idle", "Idle color", Setting::ColorTag{}, 0x66222222 });
     }
 
+    // Exact, and cheap: the layout is a fixed grid, so it follows from the two
+    // size settings without measuring anything.
+    ui::Rect measureHudBody(float scale) override {
+        const float cell = settingFloat("size", 26.0f) * scale;
+        const float gap  = settingFloat("gap", 3.0f) * scale;
+        const float step = cell + gap;
+
+        float h = step * 2.0f;                                  // W row + ASD row
+        if (settingBool("mouse", true)) h += step;
+        if (settingBool("space", true)) h += cell * 0.6f + gap;
+
+        return ui::Rect{ 0, 0, 3.0f * cell + 2.0f * gap, h - gap };
+    }
+
     ui::Rect writeHudBody(const ui::Rect& origin, float scale) override {
         const float cell = settingFloat("size", 26.0f) * scale;
         const float gap  = settingFloat("gap", 3.0f) * scale;
@@ -79,7 +93,10 @@ private:
         const bool down = isDown(vk);
 
         const ui::Rect box{ x, y, w, h };
-        r.fillRoundedRect(box, 3.0f,
+        // Radius follows the key's own height rather than a flat 3px, so a key
+        // keeps its shape when the widget is scaled up — a fixed radius on a
+        // scaled box is what makes an overlay look stretched.
+        r.fillRoundedRect(box, h * 0.18f,
                           ui::Color::rgba(down ? settingColor("active", 0xFF4C9AFF)
                                                : settingColor("idle", 0x66222222)));
 
@@ -87,7 +104,7 @@ private:
             // Invert the label against a lit key so it stays readable whatever
             // the user picks for the pressed color.
             const ui::Color fg = down ? ui::Color::rgba(0xFF101418) : textColor();
-            r.drawText(label, box, fg, h * 0.42f, ui::TextAlign::Center, true);
+            r.drawText(label, box, fg, h * 0.42f, ui::TextAlign::Center, ui::FontWeight::SemiBold);
         }
     }
 };

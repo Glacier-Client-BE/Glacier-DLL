@@ -1,4 +1,4 @@
-#include "../HudModule.h"
+#include "../TextHudModule.h"
 #include "../ModuleRegistry.h"
 
 #include <deque>
@@ -16,10 +16,10 @@ namespace glacier {
 // a broken counter when you are clicking steadily.
 //
 // No game memory involved.
-class CpsCounter final : public HudModule {
+class CpsCounter final : public TextHudModule {
 public:
     CpsCounter()
-        : HudModule("CPS Counter", "Shows clicks per second",
+        : TextHudModule("CPS Counter", "Shows clicks per second",
                     Category::Combat, 0,
                     0.01f, 0.09f, 0xFFFFFFFF) {
         addSetting(Setting{ "right", "Show right clicks", true });
@@ -31,31 +31,27 @@ public:
         (rightButton ? m_right : m_left).push_back(now);
     }
 
-    ui::Rect writeHudBody(const ui::Rect& origin, float scale) override {
-        auto& r = ui::Renderer::get();
-
+    void buildLines(std::vector<Line>& out) override {
         const bool showRight = settingBool("right", true);
-        std::string text;
+
+        std::size_t left = 0;
+        std::size_t right = 0;
         {
             const ULONGLONG now = GetTickCount64();
             std::scoped_lock lock(m_mutex);
             prune(m_left, now);
             prune(m_right, now);
-
-            text = std::to_string(m_left.size()) + " CPS";
-            if (showRight) {
-                text += "  |  " + std::to_string(m_right.size()) + " RCPS";
-            }
+            left  = m_left.size();
+            right = m_right.size();
         }
 
-        const float size = 15.0f * scale;
-        const float w = r.measureText(text, size, true);
-        const float h = size * 1.4f;
-
-        r.drawText(text, ui::Rect{ origin.x, origin.y, w + 4.0f, h },
-                   textColor(), size, ui::TextAlign::Left, true);
-
-        return ui::Rect{ origin.x, origin.y, w, h };
+        push(out, std::to_string(left) + " CPS");
+        // Right clicks get their own line rather than a " | " separator. The
+        // pipe was doing the job a line break does better, and it made the
+        // widget wide enough to collide with anything beside it.
+        if (showRight) {
+            pushSecondary(out, std::to_string(right) + " RCPS");
+        }
     }
 
 private:

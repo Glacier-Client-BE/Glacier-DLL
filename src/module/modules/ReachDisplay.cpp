@@ -1,4 +1,4 @@
-#include "../HudModule.h"
+#include "../TextHudModule.h"
 #include "../ModuleRegistry.h"
 #include "../../sdk/GameSDK.h"
 
@@ -13,25 +13,21 @@ namespace glacier {
 // game's attack through untouched. Glacier does not extend, modify, or trigger
 // attacks — this reports what happened, it does not change what can happen.
 // (See the scope boundary in README.)
-class ReachDisplay final : public HudModule {
+class ReachDisplay final : public TextHudModule {
 public:
     ReachDisplay()
-        : HudModule("Reach Display", "Shows the distance of your last hit",
+        : TextHudModule("Reach Display", "Shows the distance of your last hit",
                     Category::Combat, 0,
                     0.01f, 0.25f, 0xFFFFFFFF) {
         addSetting(Setting{ "hold", "Seconds to display", 3.0f, 0.5f, 15.0f, 0.5f });
         addSetting(Setting{ "fade", "Fade out", true });
     }
 
-    ui::Rect writeHudBody(const ui::Rect& origin, float scale) override {
-        auto& r = ui::Renderer::get();
-
+    void buildLines(std::vector<Line>& out) override {
         std::uint64_t ageMs = 0;
         const auto distance = sdk::GameSDK::get().lastAttackDistance(&ageMs);
 
         const float holdMs = settingFloat("hold", 3.0f) * 1000.0f;
-        const float size = 15.0f * scale;
-        const float h = size * 1.4f;
 
         std::string text;
         float alpha = 1.0f;
@@ -55,11 +51,7 @@ public:
             }
         }
 
-        const float w = r.measureText(text, size, true);
-        r.drawText(text, ui::Rect{ origin.x, origin.y, w + 4.0f, h },
-                   textColor().withAlpha(alpha), size, ui::TextAlign::Left, true);
-
-        return ui::Rect{ origin.x, origin.y, w, h };
+        out.push_back(Line{ std::move(text), false, textColor().withAlpha(alpha) });
     }
 };
 

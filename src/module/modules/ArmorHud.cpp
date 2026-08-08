@@ -31,6 +31,36 @@ public:
         addSetting(Setting{ "notice", "Explain when armor is unreadable", true });
     }
 
+    // Runs one frame ahead of the draw, so the background is sized to the row
+    // that is about to be drawn rather than the previous one. Walks the same
+    // decisions writeHudBody does; anything that disagrees would show up as a
+    // background that does not fit the slots.
+    ui::Rect measureHudBody(float scale) override {
+        const float cell = settingFloat("slot", 30.0f) * scale;
+        const float gap  = settingFloat("gap", 4.0f) * scale;
+        const bool  showEmpty = settingBool("empty", true);
+
+        auto& sdkRef = sdk::GameSDK::get();
+        float width = 0.0f;
+
+        if (sdkRef.armorSupported()) {
+            for (const auto& stack : sdkRef.armor()) {
+                if (!stack.valid && !showEmpty) continue;
+                width += cell + gap;
+            }
+        } else if (settingBool("notice", true)) {
+            width += ui::Renderer::get().measureText("Armor unavailable on this build",
+                                                     cell * 0.42f, ui::FontWeight::Normal) + gap;
+        }
+
+        if (settingBool("held", true)) {
+            const auto held = sdkRef.heldItem();
+            if (held.valid || showEmpty) width += gap + cell + gap;
+        }
+
+        return ui::Rect{ 0, 0, width > 0.0f ? width - gap : 0.0f, cell };
+    }
+
     ui::Rect writeHudBody(const ui::Rect& origin, float scale) override {
         const float cell = settingFloat("slot", 30.0f) * scale;
         const float gap  = settingFloat("gap", 4.0f) * scale;
@@ -54,7 +84,7 @@ public:
             auto& r = ui::Renderer::get();
             const char* msg = "Armor unavailable on this build";
             const float size = cell * 0.42f;
-            const float w = r.measureText(msg, size, false);
+            const float w = r.measureText(msg, size, ui::FontWeight::Normal);
             r.drawText(msg, ui::Rect{ x, origin.y, w + 4.0f, cell },
                        textColor().withAlpha(0.5f), size);
             x += w + gap;
@@ -115,7 +145,7 @@ private:
         if (settingBool("counts", true) && stack.count > 1) {
             r.drawText(std::to_string(stack.count),
                        ui::Rect{ x, y + cell * 0.18f, cell - 3.0f, cell * 0.5f },
-                       textColor(), cell * 0.38f, ui::TextAlign::Right, true);
+                       textColor(), cell * 0.38f, ui::TextAlign::Right, ui::FontWeight::SemiBold);
         }
     }
 

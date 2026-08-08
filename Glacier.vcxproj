@@ -122,6 +122,7 @@
     <ClInclude Include="src\sdk\ItemRendering.h" />
     <ClInclude Include="src\module\Module.h" />
     <ClInclude Include="src\module\HudModule.h" />
+    <ClInclude Include="src\module\TextHudModule.h" />
     <ClInclude Include="src\module\ModuleRegistry.h" />
     <ClInclude Include="src\module\ModuleManager.h" />
     <ClInclude Include="src\module\Setting.h" />

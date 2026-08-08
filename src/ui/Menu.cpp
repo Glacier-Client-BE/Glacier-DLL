@@ -105,7 +105,7 @@ void Menu::drawSidebar(const Rect& area) {
     r.fillRect(Rect{ area.right() - 10.0f, area.y, 10.0f, area.h }, kSidebar);
 
     r.drawText("GLACIER", Rect{ area.x + kPad, area.y + kPad, area.w - 2 * kPad, 28.0f },
-               kAccent, 17.0f, TextAlign::Left, true);
+               kAccent, 17.0f, TextAlign::Left, FontWeight::SemiBold);
 
     float y = area.y + 52.0f;
     for (const auto cat : kCategories) {
@@ -192,7 +192,7 @@ void Menu::drawModuleCard(Module& module, Rect& cursor, float width) {
     }
 
     r.drawText(module.name(), Rect{ labelRect.x, card.y + 4.0f, labelRect.w, 20.0f },
-               module.enabled() ? kText : kTextDim, 14.0f, TextAlign::Left, true);
+               module.enabled() ? kText : kTextDim, 14.0f, TextAlign::Left, FontWeight::SemiBold);
     r.drawText(module.description(),
                Rect{ labelRect.x, card.y + 20.0f, labelRect.w, 16.0f },
                kTextDim.withAlpha(0.7f), 11.0f);

@@ -1,4 +1,4 @@
-#include "../HudModule.h"
+#include "../TextHudModule.h"
 #include "../ModuleRegistry.h"
 #include "../../util/FrameStats.h"
 
@@ -9,10 +9,10 @@
 namespace glacier {
 
 // Real-world clock and session length. Touches no game memory.
-class Clock final : public HudModule {
+class Clock final : public TextHudModule {
 public:
     Clock()
-        : HudModule("Clock", "Shows the real time and session length",
+        : TextHudModule("Clock", "Shows the real time and session length",
                     Category::Misc, 0,
                     0.01f, 0.29f, 0xFFFFFFFF) {
         addSetting(Setting{ "seconds", "Show seconds", false });
@@ -20,22 +20,14 @@ public:
         addSetting(Setting{ "session", "Show session length", true });
     }
 
-    ui::Rect writeHudBody(const ui::Rect& origin, float scale) override {
-        auto& r = ui::Renderer::get();
-
-        std::string text = wallClock();
+    void buildLines(std::vector<Line>& out) override {
+        push(out, wallClock());
+        // Session length is supporting detail, so it gets its own dimmer line
+        // rather than being parenthesised onto the clock. Two clean lines read
+        // faster at a glance than one long one.
         if (settingBool("session", true)) {
-            text += "  (" + sessionLength() + ")";
+            pushSecondary(out, sessionLength());
         }
-
-        const float size = 15.0f * scale;
-        const float w = r.measureText(text, size, true);
-        const float h = size * 1.4f;
-
-        r.drawText(text, ui::Rect{ origin.x, origin.y, w + 4.0f, h },
-                   textColor(), size, ui::TextAlign::Left, true);
-
-        return ui::Rect{ origin.x, origin.y, w, h };
     }
 
 private:

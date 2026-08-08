@@ -254,14 +254,21 @@ void Renderer::releaseFormats() {
     m_formats.clear();
 }
 
-IDWriteTextFormat* Renderer::formatFor(float size, bool bold, TextAlign align) {
-    const FormatKey key{ static_cast<int>(size * 4.0f), bold, align };
+IDWriteTextFormat* Renderer::formatFor(float size, FontWeight weight, TextAlign align) {
+    const FormatKey key{ static_cast<int>(size * 4.0f), weight, align };
     if (auto it = m_formats.find(key); it != m_formats.end()) return it->second;
+
+    DWRITE_FONT_WEIGHT dw = DWRITE_FONT_WEIGHT_NORMAL;
+    switch (weight) {
+        case FontWeight::Light:    dw = DWRITE_FONT_WEIGHT_LIGHT;     break;
+        case FontWeight::Medium:   dw = DWRITE_FONT_WEIGHT_MEDIUM;    break;
+        case FontWeight::SemiBold: dw = DWRITE_FONT_WEIGHT_SEMI_BOLD; break;
+        default:                   dw = DWRITE_FONT_WEIGHT_NORMAL;    break;
+    }
 
     IDWriteTextFormat* fmt = nullptr;
     if (FAILED(m_dwrite->CreateTextFormat(
-            L"Segoe UI", nullptr,
-            bold ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+            L"Segoe UI", nullptr, dw,
             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
             size, L"en-us", &fmt))) {
         return nullptr;
@@ -280,21 +287,34 @@ IDWriteTextFormat* Renderer::formatFor(float size, bool bold, TextAlign align) {
 }
 
 void Renderer::drawText(std::string_view text, const Rect& box, const Color& c,
-                        float size, TextAlign align, bool bold) {
+                        float size, TextAlign align, FontWeight weight, bool shadow) {
     if (!m_drawing || text.empty()) return;
-    IDWriteTextFormat* fmt = formatFor(size, bold, align);
+    IDWriteTextFormat* fmt = formatFor(size, weight, align);
     if (!fmt) return;
 
     const std::wstring wide = widen(text);
+
+    // Shadow first, so the real glyphs land on top of it. Offset is a flat
+    // pixel rather than a fraction of the size: it is there to separate the
+    // glyph edge from whatever is behind it, and that need doesn't grow with
+    // the font.
+    if (shadow) {
+        m_brush->SetColor(toD2D(Color{ 0.0f, 0.0f, 0.0f, c.a * 0.7f }));
+        m_d2d->DrawTextW(wide.c_str(), static_cast<UINT32>(wide.size()), fmt,
+                         D2D1::RectF(box.x + 1.0f, box.y + 1.0f,
+                                     box.right() + 1.0f, box.bottom() + 1.0f),
+                         m_brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+
     m_brush->SetColor(toD2D(c));
     m_d2d->DrawTextW(wide.c_str(), static_cast<UINT32>(wide.size()), fmt,
                      D2D1::RectF(box.x, box.y, box.right(), box.bottom()), m_brush,
                      D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
-float Renderer::measureText(std::string_view text, float size, bool bold) {
+float Renderer::measureText(std::string_view text, float size, FontWeight weight) {
     if (!m_ready || text.empty()) return 0.0f;
-    IDWriteTextFormat* fmt = formatFor(size, bold, TextAlign::Left);
+    IDWriteTextFormat* fmt = formatFor(size, weight, TextAlign::Left);
     if (!fmt) return 0.0f;
 
     const std::wstring wide = widen(text);
@@ -307,6 +327,25 @@ float Renderer::measureText(std::string_view text, float size, bool bold) {
     layout->GetMetrics(&metrics);
     safeRelease(layout);
     return metrics.widthIncludingTrailingWhitespace;
+}
+
+float Renderer::lineHeight(float size, FontWeight weight) {
+    if (!m_ready) return size * 1.35f;   // pre-init callers get the old guess
+
+    IDWriteTextFormat* fmt = formatFor(size, weight, TextAlign::Left);
+    if (!fmt) return size * 1.35f;
+
+    // Measure a real glyph rather than asking the format: an empty layout
+    // reports zero height, and DirectWrite has no line-metrics call on
+    // IDWriteTextFormat itself.
+    IDWriteTextLayout* layout = nullptr;
+    if (FAILED(m_dwrite->CreateTextLayout(L"Xg", 2, fmt, 4096.0f, 512.0f, &layout))) {
+        return size * 1.35f;
+    }
+    DWRITE_TEXT_METRICS metrics{};
+    layout->GetMetrics(&metrics);
+    safeRelease(layout);
+    return metrics.height > 0.0f ? metrics.height : size * 1.35f;
 }
 
 void Renderer::pushClip(const Rect& r) {
