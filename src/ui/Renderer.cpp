@@ -4,10 +4,13 @@
 #include "../util/Logger.h"
 
 #include <algorithm>
+#include <d2d1effects.h>
 #include <iterator>
 #include <set>
 #include <string_view>
 #include <vector>
+
+#pragma comment(lib, "dxguid.lib")
 
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
@@ -92,6 +95,12 @@ void Renderer::releaseTarget() {
     if (m_d2d) m_d2d->SetTarget(nullptr);
     safeRelease(m_brush);
     safeRelease(m_target);
+    // Both created FROM m_d2d, so they're invalid the moment it's released —
+    // must go before it, not just whenever convenient. Recreated lazily by
+    // blurBackdrop() the next time it's called.
+    safeRelease(m_blurEffect);
+    safeRelease(m_blurSource);
+    m_blurSourceSize = { 0, 0 };
     safeRelease(m_d2d);
     // Per-target only — m_d3d11on12/m_d3d11on12Device/m_d3d11on12Context are
     // NOT released here. They bridge the game's D3D12 device itself, not any
@@ -338,6 +347,57 @@ void Renderer::endFrame() {
         releaseTarget();
         m_pxWidth = m_pxHeight = 0;
     }
+}
+
+void Renderer::blurBackdrop(const Rect& r, float sigma) {
+    if (!m_drawing) return;
+
+    const auto pxClampX = [&](float v) {
+        return static_cast<UINT32>(std::clamp(v, 0.0f, static_cast<float>(m_pxWidth)));
+    };
+    const auto pxClampY = [&](float v) {
+        return static_cast<UINT32>(std::clamp(v, 0.0f, static_cast<float>(m_pxHeight)));
+    };
+    const D2D1_RECT_U src{ pxClampX(r.x), pxClampY(r.y), pxClampX(r.right()), pxClampY(r.bottom()) };
+    if (src.right <= src.left || src.bottom <= src.top) return;
+
+    const D2D1_SIZE_U size{ src.right - src.left, src.bottom - src.top };
+    if (!m_blurSource || m_blurSourceSize.width != size.width
+                       || m_blurSourceSize.height != size.height) {
+        safeRelease(m_blurSource);
+        const auto bitmapProps = D2D1::BitmapProperties(
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        if (FAILED(m_d2d->CreateBitmap(size, nullptr, 0, bitmapProps, &m_blurSource))
+            || !m_blurSource) {
+            warnOnce("blurBackdrop: CreateBitmap failed — menu background stays unblurred");
+            return;
+        }
+        m_blurSourceSize = size;
+    }
+
+    // Grabs whatever is already drawn at `r` — the game frame plus anything
+    // Glacier itself has drawn so far this frame. Must run before the
+    // panel's own fill, or it captures the panel instead of what's behind it.
+    if (FAILED(m_blurSource->CopyFromRenderTarget(nullptr, m_d2d, &src))) return;
+
+    if (!m_blurEffect) {
+        if (FAILED(m_d2d->CreateEffect(CLSID_D2D1GaussianBlur, &m_blurEffect)) || !m_blurEffect) {
+            warnOnce("blurBackdrop: CreateEffect(GaussianBlur) failed — menu background "
+                     "stays unblurred");
+            return;
+        }
+    }
+    m_blurEffect->SetInput(0, m_blurSource);
+    m_blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, sigma);
+    m_blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION, D2D1_GAUSSIANBLUR_OPTIMIZATION_SPEED);
+    // Clamps the blur to the captured rect instead of feathering past its
+    // edges — without this, the blur reads as a soft-edged patch rather than
+    // a clean panel-shaped one.
+    m_blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD);
+
+    // Drawn back at the exact spot it was captured from.
+    const auto offset = D2D1::Point2F(r.x, r.y);
+    m_d2d->DrawImage(m_blurEffect, &offset);
 }
 
 void Renderer::fillRect(const Rect& r, const Color& c) {

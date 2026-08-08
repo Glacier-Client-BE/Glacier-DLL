@@ -1,24 +1,28 @@
 #pragma once
 
-// Freezes player movement/attack input while Glacier's menu is open, the same
-// way a real Bedrock Screen does (Latite/Flarial included) — the player
-// cannot walk, jump, sneak, sprint, or attack/use behind the menu.
+#include <utility>
+
+// Freezes player movement/attack/look input while Glacier's menu is open,
+// the same way a real Bedrock Screen does (Latite/Flarial included) — the
+// player cannot walk, jump, sneak, sprint, attack/use, or turn the camera
+// behind the menu.
 //
 // Why this exists alongside GameSDK::applyCursorState: releaseCursor() only
-// controls whether the game's OWN cursor-grab flag is set, which is the
-// mechanism Bedrock's *camera look* reads. Movement keys (WASD/Space/Shift/
-// Ctrl) and mouse buttons are handled by a separate path that does not check
-// cursorGrabbed() at all — a Screen normally intercepts them before gameplay
-// ever sees them, but Glacier's menu is a D2D overlay, not a real Screen, so
-// nothing was ever intercepting them. This is that interception, done at the
-// OS input level (WH_KEYBOARD_LL / WH_MOUSE_LL) instead — the same technique
-// NullMovement already uses for WASD, just gated on the menu being open
-// instead of always active, and covering the mouse buttons too.
+// controls the game's OWN cursor-grab flag, and in practice that flag
+// flipping does not reliably stop either movement or camera look — see the
+// history in docs/HANDOFF.md. A Screen normally intercepts all of this
+// before gameplay ever sees it; Glacier's menu is a D2D overlay, not a real
+// Screen, so nothing was ever intercepting it. This is that interception,
+// done at the OS input level (WH_KEYBOARD_LL / WH_MOUSE_LL) — the same
+// technique NullMovement already uses for WASD.
 //
-// Deliberately does NOT touch mouse *movement* (WM_MOUSEMOVE / cursor
-// position): blocking that at the OS level would also freeze the OS cursor,
-// which the menu itself needs free to move so it can be clicked. Camera look
-// stays the job of GameSDK::applyCursorState / setCursorReleased.
+// Mouse movement is blocked too now (it wasn't originally — see the removed
+// comment in git history), which means the real OS cursor stops moving
+// while the menu is open. That's why this also maintains its own virtual
+// cursor position, fed from the same raw deltas before they're dropped:
+// ui::Input reads it instead of GetCursorPos while the menu is open (see
+// Input::pollMouse), so the menu can still be clicked with the camera look
+// it drives fully decoupled from the game's.
 namespace glacier::ui {
 
 class InputGuard {
@@ -36,10 +40,18 @@ public:
     // Glacier's teardown.
     void stop();
 
-    // Whether movement/attack input is currently being suppressed. Driven
-    // every frame from the Present hook off ui::Menu::open(), the same way
-    // setCursorReleased is.
+    // Whether movement/attack/look input is currently being suppressed.
+    // Driven every frame from the Present hook off ui::Menu::open(), the
+    // same way setCursorReleased is. On the false->true edge, seeds the
+    // virtual cursor from the real OS cursor position (via GetCursorPos)
+    // so it doesn't jump when the menu opens.
     void setActive(bool active);
+
+    // Client-space virtual cursor position, accumulated from raw mouse
+    // deltas while active. Meaningless (and unmoving) while inactive — the
+    // real GetCursorPos is authoritative then. Not clamped to the screen;
+    // the caller clamps against its own known bounds (see Input::pollMouse).
+    std::pair<float, float> cursorPos();
 
 private:
     InputGuard() = default;

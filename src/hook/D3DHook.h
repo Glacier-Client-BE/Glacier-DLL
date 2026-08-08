@@ -17,10 +17,23 @@
 //
 // D3D12 needs one more thing a D3D11 swap chain doesn't: bridging the
 // overlay onto it requires a live ID3D12CommandQueue*, which is not
-// reachable from the swap chain itself. It is, however, the exact object
-// passed as `pDevice` to IDXGIFactory2::CreateSwapChainForHwnd when the game
-// creates the swap chain — the same fact Latite's DXHooks.cpp hooks that
-// call to capture it. See commandQueue().
+// reachable from the swap chain itself. Two ways to capture it, both
+// installed, because neither is reliable alone:
+//   - It's the exact object passed as `pDevice` to
+//     IDXGIFactory2::CreateSwapChainForHwnd when the game creates its swap
+//     chain — the fact Latite's DXHooks.cpp hooks that call to capture it.
+//     Useless in practice for an internal DLL, though: the game has already
+//     created its swap chain (and thus already called this) by the time
+//     Glacier attaches and gets a chance to hook it. Kept anyway in case a
+//     later resize/recreate ever calls it again.
+//   - ID3D12CommandQueue::ExecuteCommandLists, hooked the same "kiero-style"
+//     way Present/ResizeBuffers are: a throwaway probe queue supplies the
+//     vtable (shared across every instance of the interface from the same
+//     d3d12.dll, exactly like the probe swap chain), so the hook catches the
+//     GAME's real queue's calls without ever needing a real instance of it.
+//     This one actually works after the fact, and is what to trust — see
+//     initialize().
+// See commandQueue().
 //
 // The interface is deliberately renderer-agnostic: modules and the UI only
 // ever see the callbacks below, never which backend produced them.
@@ -74,19 +87,24 @@ private:
         IDXGIFactory2* factory, IUnknown* device, HWND hwnd,
         const DXGI_SWAP_CHAIN_DESC1* desc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fsDesc,
         IDXGIOutput* output, IDXGISwapChain1** outSwapChain);
+    static void STDMETHODCALLTYPE hkExecuteCommandLists(
+        ID3D12CommandQueue* self, UINT numLists, ID3D12CommandList* const* lists);
 
     using PresentFn       = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
     using ResizeBuffersFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT, UINT, DXGI_FORMAT, UINT);
     using CreateSwapChainForHwndFn = HRESULT(STDMETHODCALLTYPE*)(
         IDXGIFactory2*, IUnknown*, HWND, const DXGI_SWAP_CHAIN_DESC1*,
         const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*, IDXGIOutput*, IDXGISwapChain1**);
+    using ExecuteCommandListsFn = void(STDMETHODCALLTYPE*)(
+        ID3D12CommandQueue*, UINT, ID3D12CommandList* const*);
 
     inline static PresentFn       s_originalPresent = nullptr;
     inline static ResizeBuffersFn s_originalResize  = nullptr;
     inline static CreateSwapChainForHwndFn s_originalCreateSwapChainForHwnd = nullptr;
+    inline static ExecuteCommandListsFn    s_originalExecuteCommandLists    = nullptr;
     inline static std::atomic<std::uint64_t> s_frames{ 0 };
-    // Owning reference — released in shutdown(). Only ever written from
-    // hkCreateSwapChainForHwnd, on the game's own thread.
+    // Owning reference — released in shutdown(). Written from either detour,
+    // on the game's own thread; whichever fires first wins (see both).
     inline static ID3D12CommandQueue* s_commandQueue = nullptr;
 
     // The vtable we hooked, recorded so the first live frame can confirm the

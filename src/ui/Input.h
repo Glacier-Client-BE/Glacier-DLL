@@ -1,5 +1,9 @@
 #pragma once
 
+#include "InputGuard.h"
+#include "Renderer.h"
+
+#include <algorithm>
 #include <Windows.h>
 
 // Input state for the menu and the HUD editor.
@@ -13,7 +17,13 @@
 // through RawInput, so WM_MOUSEMOVE / WM_LBUTTONDOWN are not reliably delivered
 // to our WndProc — the menu used to see the cursor parked at (0,0) with no
 // clicks at all, which is why nothing in it responded. pollMouse() is called
-// once per frame from the Present hook while the menu is open.
+// once per frame from the Present hook while the menu is open. Position comes
+// from InputGuard's virtual cursor rather than GetCursorPos — see
+// InputGuard.h and the comment on pollMouse — because InputGuard also blocks
+// raw mouse movement from reaching the game (so camera look actually stops),
+// which freezes the real OS cursor too. Buttons still come from
+// GetAsyncKeyState, which reflects physical state regardless of InputGuard
+// blocking the corresponding WM_* messages from propagating further.
 //
 // pollMouse is the SINGLE owner of button edges. Do not also raise edges from
 // the WndProc: the poll observes the physical button before the message
@@ -35,11 +45,18 @@ public:
     // derives this frame's press/release edges from the change since the last
     // poll. See the class comment for why this doesn't come from WM_* messages.
     void pollMouse(HWND hwnd) {
-        POINT p{};
-        if (GetCursorPos(&p) && ScreenToClient(hwnd, &p)) {
-            m_x = static_cast<float>(p.x);
-            m_y = static_cast<float>(p.y);
-        }
+        // InputGuard blocks raw mouse movement from reaching the game (and
+        // the real OS cursor) while the menu is open — see InputGuard.h —
+        // so GetCursorPos would just read a frozen, stale position here.
+        // Its own virtual cursor, accumulated from the same raw deltas
+        // before they were dropped, is the live one while the menu is open.
+        const auto [vx, vy] = InputGuard::get().cursorPos();
+        const auto& renderer = Renderer::get();
+        const float maxX = renderer.width()  > 0.0f ? renderer.width()  - 1.0f : 0.0f;
+        const float maxY = renderer.height() > 0.0f ? renderer.height() - 1.0f : 0.0f;
+        m_x = std::clamp(vx, 0.0f, maxX);
+        m_y = std::clamp(vy, 0.0f, maxY);
+        (void)hwnd;   // no longer used — kept in the signature, see the .cpp caller
 
         const bool l = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
         const bool r = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;

@@ -131,22 +131,52 @@ bool D3DHook::initialize() {
     if (device) device->Release();
     if (swapChain) swapChain->Release();
 
-    // IDXGIFactory2::CreateSwapChainForHwnd, hooked purely to capture the
-    // ID3D12CommandQueue* the game creates its swap chain with — see the
-    // class comment. Not fatal if this fails: it only matters on a D3D12
-    // swap chain, and even then the overlay simply won't bridge onto it
-    // rather than anything crashing.
+    // IDXGIFactory2::CreateSwapChainForHwnd — see the class comment for why
+    // this one is kept despite being unreliable in practice (the game has
+    // always already called it once by the time an internal DLL attaches) —
+    // and IDXGIAdapter, needed below for the D3D12 probe device. One factory,
+    // released once at the end: EnumAdapters below borrows it too, and
+    // releasing it after the first use only would make that a
+    // use-after-free.
     IDXGIFactory2* factory2 = nullptr;
     if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory2))) && factory2) {
         void** factoryVTable = *reinterpret_cast<void***>(factory2);
-        if (!hooks.create("IDXGIFactory2::CreateSwapChainForHwnd", factoryVTable[15],
-                          &D3DHook::hkCreateSwapChainForHwnd, &s_originalCreateSwapChainForHwnd)) {
-            LOG_WARN("could not hook CreateSwapChainForHwnd — if the game renders through "
-                     "D3D12 the overlay will not appear (no command queue to bridge with)");
+        hooks.create("IDXGIFactory2::CreateSwapChainForHwnd", factoryVTable[15],
+                    &D3DHook::hkCreateSwapChainForHwnd, &s_originalCreateSwapChainForHwnd);
+
+        // The one that actually works: a throwaway D3D12 device + command
+        // queue, purely to read ID3D12CommandQueue's vtable — see the class
+        // comment. D3D12CreateDevice failing outright just means no D3D12
+        // device is available on this machine at all (the common case, since
+        // most systems still run Bedrock through D3D11), not worth a warning
+        // on its own; only warn if a device exists but the queue specifically
+        // couldn't be made, since that is the surprising failure.
+        IDXGIAdapter* adapter = nullptr;
+        if (SUCCEEDED(factory2->EnumAdapters(0, &adapter)) && adapter) {
+            ID3D12Device* device12 = nullptr;
+            if (SUCCEEDED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device12)))
+                && device12) {
+                D3D12_COMMAND_QUEUE_DESC qdesc{};
+                qdesc.Type  = D3D12_COMMAND_LIST_TYPE_DIRECT;
+                qdesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+                ID3D12CommandQueue* probeQueue = nullptr;
+                if (SUCCEEDED(device12->CreateCommandQueue(&qdesc, IID_PPV_ARGS(&probeQueue)))
+                    && probeQueue) {
+                    void** queueVTable = *reinterpret_cast<void***>(probeQueue);
+                    hooks.create("ID3D12CommandQueue::ExecuteCommandLists", queueVTable[10],
+                                &D3DHook::hkExecuteCommandLists, &s_originalExecuteCommandLists);
+                    probeQueue->Release();
+                } else {
+                    LOG_WARN("could not create a probe D3D12 command queue — if the game "
+                             "renders through D3D12, the overlay will not appear (no command "
+                             "queue to bridge with)");
+                }
+                device12->Release();
+            }
+            adapter->Release();
         }
+
         factory2->Release();
-    } else {
-        LOG_WARN("CreateDXGIFactory1 failed — same D3D12 caveat as above");
     }
 
     m_initialized = ok;
@@ -158,6 +188,7 @@ void D3DHook::shutdown() {
     s_originalPresent = nullptr;
     s_originalResize  = nullptr;
     s_originalCreateSwapChainForHwnd = nullptr;
+    s_originalExecuteCommandLists    = nullptr;
     s_hookedVTable    = nullptr;
     s_vtableChecked.store(false, std::memory_order_relaxed);
     if (s_commandQueue) {
@@ -184,6 +215,25 @@ HRESULT STDMETHODCALLTYPE D3DHook::hkCreateSwapChainForHwnd(
         }
     }
     return s_originalCreateSwapChainForHwnd(factory, device, hwnd, desc, fsDesc, output, outSwapChain);
+}
+
+void STDMETHODCALLTYPE D3DHook::hkExecuteCommandLists(
+        ID3D12CommandQueue* self, UINT numLists, ID3D12CommandList* const* lists) {
+    // The real, reliable capture path — see the class comment on why
+    // hkCreateSwapChainForHwnd above almost never actually catches anything.
+    // Guards against grabbing a transient/secondary queue (compute, copy,
+    // bundle-only) by requiring DIRECT — the only type usable for
+    // D3D11On12CreateDevice's presentation bridge anyway.
+    if (self && !s_commandQueue) {
+        const D3D12_COMMAND_QUEUE_DESC desc = self->GetDesc();
+        if (desc.Type == D3D12_COMMAND_LIST_TYPE_DIRECT) {
+            self->AddRef();   // owning ref, released in shutdown()
+            s_commandQueue = self;
+            LOG_INFO("captured the game's D3D12 command queue via ExecuteCommandLists — the "
+                     "overlay can bridge onto its swap chain via D3D11On12");
+        }
+    }
+    s_originalExecuteCommandLists(self, numLists, lists);
 }
 
 HRESULT STDMETHODCALLTYPE D3DHook::hkPresent(IDXGISwapChain* sc, UINT sync, UINT flags) {

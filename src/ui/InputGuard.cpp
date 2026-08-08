@@ -1,5 +1,6 @@
 #include "InputGuard.h"
 
+#include "../hook/D3DHook.h"
 #include "../util/Logger.h"
 
 #include <atomic>
@@ -35,6 +36,16 @@ std::thread        g_thread;
 std::atomic<DWORD> g_threadId{ 0 };
 std::atomic<bool>  g_running{ false };
 
+// Virtual cursor, accumulated from raw deltas while active — see InputGuard.h.
+// g_lastPt is touched only from inside mouseProc, which always runs on the
+// same (hook pump) thread, so it needs no synchronization of its own;
+// g_haveLastPt is what hands off "is g_lastPt valid yet" safely to and from
+// setActive(), which can run on the logic or render thread.
+std::atomic<float> g_cursorX{ 0.0f };
+std::atomic<float> g_cursorY{ 0.0f };
+std::atomic<bool>  g_haveLastPt{ false };
+POINT              g_lastPt{};
+
 LRESULT CALLBACK keyboardProc(int code, WPARAM wParam, LPARAM lParam) {
     if (code == HC_ACTION && g_active.load(std::memory_order_relaxed)) {
         const auto* info = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
@@ -47,9 +58,24 @@ LRESULT CALLBACK keyboardProc(int code, WPARAM wParam, LPARAM lParam) {
 
 LRESULT CALLBACK mouseProc(int code, WPARAM wParam, LPARAM lParam) {
     if (code == HC_ACTION && g_active.load(std::memory_order_relaxed)) {
+        const auto* info = reinterpret_cast<MSLLHOOKSTRUCT*>(lParam);
         switch (wParam) {
-            // Attack/use. Movement (WM_MOUSEMOVE) is deliberately left alone —
-            // see InputGuard.h for why.
+            case WM_MOUSEMOVE:
+                // `pt` is valid here regardless of whether we block the event
+                // below — it's the position this move WOULD have produced,
+                // computed before the hook chain runs. Diffing it against the
+                // last move gives the same raw delta the game would have
+                // seen, without letting the game (or the OS cursor) see it.
+                if (g_haveLastPt.exchange(true, std::memory_order_relaxed)) {
+                    g_cursorX.fetch_add(static_cast<float>(info->pt.x - g_lastPt.x),
+                                        std::memory_order_relaxed);
+                    g_cursorY.fetch_add(static_cast<float>(info->pt.y - g_lastPt.y),
+                                        std::memory_order_relaxed);
+                }
+                g_lastPt = info->pt;
+                return 1;
+
+            // Attack/use.
             case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
             case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK:
             case WM_MBUTTONDOWN: case WM_MBUTTONUP: case WM_MBUTTONDBLCLK:
@@ -102,7 +128,26 @@ void InputGuard::stop() {
 }
 
 void InputGuard::setActive(bool active) {
-    g_active.store(active, std::memory_order_relaxed);
+    const bool was = g_active.exchange(active, std::memory_order_relaxed);
+    if (active && !was) {
+        // Seed the virtual cursor from the real one so it doesn't jump to
+        // wherever it last was the previous time the menu was open.
+        POINT p{};
+        if (GetCursorPos(&p)) {
+            if (HWND hwnd = D3DHook::get().window()) {
+                ScreenToClient(hwnd, &p);
+            }
+            g_cursorX.store(static_cast<float>(p.x), std::memory_order_relaxed);
+            g_cursorY.store(static_cast<float>(p.y), std::memory_order_relaxed);
+        }
+        // The next WM_MOUSEMOVE establishes a fresh baseline instead of
+        // diffing against a g_lastPt from before the menu was closed.
+        g_haveLastPt.store(false, std::memory_order_relaxed);
+    }
+}
+
+std::pair<float, float> InputGuard::cursorPos() {
+    return { g_cursorX.load(std::memory_order_relaxed), g_cursorY.load(std::memory_order_relaxed) };
 }
 
 } // namespace glacier::ui

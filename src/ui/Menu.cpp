@@ -76,6 +76,10 @@ void Menu::render() {
     if (!in.leftDown()) m_draggingSetting = nullptr;
 
     const Rect screen{ 0, 0, r.width(), r.height() };
+    // Blurs the game frame behind the whole overlay before dimming it —
+    // must run first, or the dim/panel fills below would be what gets
+    // captured and blurred instead of the game.
+    r.blurBackdrop(screen, 20.0f);
     r.fillRect(screen, kBackdrop);
 
     const Rect panel{

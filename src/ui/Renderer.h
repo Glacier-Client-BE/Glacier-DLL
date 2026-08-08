@@ -119,6 +119,14 @@ public:
     void pushClip(const Rect& r);
     void popClip();
 
+    // Captures whatever's currently drawn at `r` (the game frame, plus
+    // anything Glacier has drawn so far this frame) and redraws it
+    // Gaussian-blurred in place. Call BEFORE drawing a translucent panel
+    // fill over the same rect — the blur is what shows through the
+    // translucency, not a blur of the panel itself. No-op outside
+    // beginFrame/endFrame, same as the other draw calls.
+    void blurBackdrop(const Rect& r, float sigma = 16.0f);
+
     float width()  const { return m_width; }
     float height() const { return m_height; }
     bool  ready()  const { return m_ready; }
@@ -166,6 +174,14 @@ private:
     ID2D1DeviceContext*   m_d2d    = nullptr;
     ID2D1Bitmap1*         m_target = nullptr;
     ID2D1SolidColorBrush* m_brush  = nullptr;
+
+    // blurBackdrop's scratch bitmap + effect. Both sized/created lazily and
+    // reused frame to frame — recreating a bitmap and rebuilding an effect
+    // graph every frame the menu is open would be needless GPU churn for
+    // something that's the same size almost every call.
+    ID2D1Bitmap* m_blurSource = nullptr;
+    ID2D1Effect* m_blurEffect = nullptr;
+    D2D1_SIZE_U  m_blurSourceSize{ 0, 0 };
 
     // D3D12 bridge (see createDx12WrappedSurface). The On12 device/context
     // persist across resizes — only the wrapped back buffer is per-target.
