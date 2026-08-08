@@ -124,11 +124,10 @@ void Glacier::start(HMODULE self) {
         // hold and the player keeps moving behind the menu.
         sdk::GameSDK::get().applyCursorState(ui::Menu::get().open());
 
-        // Re-evaluated every frame, not just on the open/close edge: the
-        // failure that flips cursorControlWorking() to false is only ever
-        // observed mid-session, inside applyCursorState above, so the
-        // ShowCursor fallback needs a chance to engage on whichever frame
-        // that happens on — not just the one where the menu was toggled.
+        // Also re-evaluated every frame (edge-triggered internally — see
+        // setCursorReleased) rather than only on the toggle, for the same
+        // reason as applyCursorState above: consistency matters more than
+        // avoiding a redundant call.
         setCursorReleased(ui::Menu::get().open());
 
         // Movement/attack are a separate path from cursor grab entirely (see
@@ -449,48 +448,57 @@ void Glacier::removeWndProc() {
 }
 
 void Glacier::setCursorReleased(bool released) {
-    // The real work is GameSDK::applyCursorState, driven every frame from the
-    // Present hook — the game re-grabs the cursor on its own, so this could
-    // never have been a one-shot call from here.
+    // Ported from Flarial's CursorHandler::grabCursor/releaseCursor (see
+    // reference/flarial/src/Client/Hook/Hooks/Input/CursorHandler.hpp) —
+    // pure OS APIs, no game signature needed. Earlier versions of this
+    // function trusted the game's own releaseCursor()/grabCursor() (via
+    // GameSDK::applyCursorState, still called separately every frame from
+    // the Present hook, for cursorGrabbed()'s sake elsewhere) to actually
+    // free/recapture the OS cursor. Confirmed working ("released (ok)" /
+    // "grabbed (ok)") in a real log and STILL didn't reliably free the
+    // cursor for the menu, nor reliably hand it back to the game on close —
+    // whatever the game's own function does internally isn't the whole
+    // story. This is the concrete mechanism both reference clients actually
+    // rely on: on close, clip the cursor to a zero-size rect at the
+    // window's center and SetCapture the window, so the game keeps
+    // receiving raw movement as input while the pointer itself can't
+    // visibly move; on open, undo both.
     //
-    // This USED to skip everything below whenever
-    // `cursorControlWorking()` claimed the game's own releaseCursor() call
-    // was taking effect — on the theory that its self-reported
-    // `cursorGrabbed()` flag flipping was proof the cursor was actually
-    // free. It wasn't: a user reported the menu drawing correctly, cursorGrabbed()
-    // presumably flipping as expected, and the OS cursor still refusing to
-    // move freely — meaning whatever else is confining/hiding it (most
-    // plausibly the game's own per-frame `ClipCursor` call, independent of
-    // its grab-state bool) was never being undone, because this function
-    // returned before reaching the `ClipCursor`/`ShowCursor` calls below.
-    // Now it always runs both: the game's own mechanism first (still worth
-    // doing — it's what actually stops camera look), and this OS-level
-    // fallback unconditionally as well, every frame the menu is open. Both
-    // are individually idempotent (ClipCursor(nullptr) removing an
-    // already-absent clip is a no-op; the ShowCursor logic below is already
-    // edge-triggered), so running both costs nothing when the game's own
-    // path is in fact sufficient on its own.
-    //
-    // Re-evaluated every frame, not just on the open/close edge — the
-    // Present hook calls this every frame the menu is open.
-    //
-    // Edge-triggered on s_cursorFallback, not level-triggered on `released`:
-    // this is now called every frame the menu is open (see the Present hook
-    // above), and ShowCursor's return value is its own running counter —
-    // calling ShowCursor(TRUE) again every frame after it's already visible
-    // would increment that counter without a matching decrement, and the
-    // eventual ShowCursor(FALSE) unwind loop would run far more times than
-    // it should to rebalance it.
+    // Called every frame the menu is open OR closed (see the Present hook),
+    // not just on the toggle edge — hence the edge-trigger here. ShowCursor
+    // is a running counter shared with anything else in the process that
+    // touches it; calling its loop every single frame instead of once per
+    // edge would be harmless on its own (the loop is self-limiting) but
+    // ClipCursor/SetCapture every frame during ordinary gameplay would mean
+    // fighting the game's own cursor handling for the entire time the menu
+    // is closed, not just at the moment it closes — precisely the kind of
+    // interference that could explain "the game doesn't steal the cursor
+    // back properly."
+    static bool s_released = false;
+    if (released == s_released) return;
+    s_released = released;
+
     if (released) {
-        if (!s_cursorFallback) {
-            ClipCursor(nullptr);
-            while (ShowCursor(TRUE) < 0) {}
-            s_cursorFallback = true;
-        }
-    } else if (s_cursorFallback) {
-        while (ShowCursor(FALSE) >= 0) {}
-        s_cursorFallback = false;
+        ClipCursor(nullptr);
+        ReleaseCapture();
+        while (ShowCursor(TRUE) < 0) {}
+        return;
     }
+
+    HWND hwnd = Glacier::get().m_window;
+    if (!hwnd) return;
+
+    RECT rect{};
+    GetClientRect(hwnd, &rect);
+    rect.top  = (rect.bottom + rect.top) / 2;
+    rect.left = (rect.right + rect.left) / 2;
+    ClientToScreen(hwnd, reinterpret_cast<LPPOINT>(&rect));
+    rect.bottom = rect.top;
+    rect.right  = rect.left;
+
+    ClipCursor(&rect);
+    SetCapture(hwnd);
+    while (ShowCursor(FALSE) >= 0) {}
 }
 
 bool Glacier::isGameInputMessage(UINT msg) {

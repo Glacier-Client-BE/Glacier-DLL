@@ -85,16 +85,17 @@ private:
     void restoreWindowTitle();
     static LRESULT CALLBACK wndProc(HWND, UINT, WPARAM, LPARAM);
 
-    // Hands the cursor between the game and the menu by driving the game's own
-    // grab state (ClientInstance::grabCursor / releaseCursor). That is also what
-    // pauses look and movement: the game stops consuming the mouse once the
-    // cursor is released. Falls back to ShowCursor only when the game call
-    // isn't available.
+    // Hands the OS cursor between the game and the menu. Ported directly from
+    // Flarial's CursorHandler::grabCursor/releaseCursor (see
+    // reference/flarial/src/Client/Hook/Hooks/Input/CursorHandler.hpp) —
+    // pure OS APIs (ClipCursor/SetCapture/ShowCursor), no game signature
+    // involved at all. Driving the game's own grabCursor()/releaseCursor()
+    // (still done separately, in the Present hook, to keep cursorGrabbed()
+    // accurate for other code that reads it) turned out not to reliably
+    // free the cursor for the menu nor reliably hand it back to the game on
+    // close — this is what both reference clients actually rely on instead.
     static void setCursorReleased(bool released);
 
-    // True while the ShowCursor fallback above is holding the cursor visible,
-    // so the matching decrement happens exactly once.
-    static inline bool s_cursorFallback = false;
     static bool isGameInputMessage(UINT msg);
 
     HMODULE           m_self        = nullptr;
