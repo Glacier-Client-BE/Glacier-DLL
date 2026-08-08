@@ -3,6 +3,7 @@
 #include "../Glacier.h"
 #include "../module/Module.h"
 #include "../module/ModuleManager.h"
+#include "../sdk/HitConfirmation.h"
 #include "../sdk/ItemRendering.h"
 #include "../util/Logger.h"
 
@@ -138,6 +139,15 @@ void applyClientKey(const std::string& key, const std::string& value) {
         sdk::ItemRendering::get().setEnabled(on);
         return;
     }
+    if (key == "hitConfirmation") {
+        bool on = false;
+        if (!parseBool(value, on)) {
+            LOG_WARN("config: bad value for [Glacier] hitConfirmation = '{}'", value);
+            return;
+        }
+        sdk::HitConfirmation::get().setEnabled(on);
+        return;
+    }
 
     int vk = 0;
     if (!parseInt(value, vk)) {
@@ -268,7 +278,13 @@ bool Config::save() {
                 << "# imported struct offsets, and a wrong one there is fatal rather than\n"
                 << "# merely wrong-looking.\n"
                 << "itemIcons = "
-                << (sdk::ItemRendering::get().enabled() ? "true" : "false") << "\n\n";
+                << (sdk::ItemRendering::get().enabled() ? "true" : "false") << "\n"
+                << "# Confirms Combo Counter hits via a hooked network packet. Off by\n"
+                << "# default: unlike itemIcons, the offsets this path reads have no second\n"
+                << "# source to cross-check against. See sdk/HitConfirmation.h before\n"
+                << "# turning this on.\n"
+                << "hitConfirmation = "
+                << (sdk::HitConfirmation::get().enabled() ? "true" : "false") << "\n\n";
         }
 
         for (const auto& module : ModuleManager::get().modules()) {

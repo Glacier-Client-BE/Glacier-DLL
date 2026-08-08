@@ -41,6 +41,7 @@ struct ItemRef {
     enum class Source : std::uint8_t {
         Armor,       // index 0..3, helmet -> boots
         Hotbar,      // index 0..8, or -1 for whatever is currently selected
+        Inventory,   // index 0..35, the whole player inventory container
     };
 
     Source source = Source::Armor;

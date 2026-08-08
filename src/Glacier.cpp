@@ -7,6 +7,7 @@
 #include "memory/GameVersion.h"
 #include "module/ModuleManager.h"
 #include "sdk/GameSDK.h"
+#include "sdk/HitConfirmation.h"
 #include "sdk/ItemRendering.h"
 #include "ui/Input.h"
 #include "ui/KeyNames.h"
@@ -77,6 +78,7 @@ void Glacier::start(HMODULE self) {
     // After the config, because whether this installs anything at all is a
     // config setting — see the comment on ItemRendering::setEnabled.
     sdk::ItemRendering::get().installHooks();
+    sdk::HitConfirmation::get().installHooks();
 
     // 4. Renderer + present wiring. The overlay owns a private D3D device, so
     //    it is created before the first frame arrives rather than lazily.

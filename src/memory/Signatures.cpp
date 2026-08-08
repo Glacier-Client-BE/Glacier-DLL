@@ -108,6 +108,14 @@ void SignatureManager::seedBedrock() {
     addSignature("ItemStackBase::getDamageValue",
         "56 57 48 83 EC ? 48 8B 05 ? ? ? ? 48 31 E0 48 89 44 24 ? 48 8B 41 ? 48 85 C0 74 ? 48 83 38");
 
+    // Used once per session to construct a throwaway ActorEventPacket and
+    // read its dispatcher vtable — see sdk/HitConfirmation.cpp. Returns
+    // std::shared_ptr<Packet> BY VALUE (a hidden caller-owned return slot),
+    // which the caller must model explicitly since there is no declared
+    // C++ type here for the compiler to generate that call for us.
+    addSignature("MinecraftPackets::createPacket",
+        "56 48 83 EC ? 48 89 CE 81 FA");
+
     // ── Offsets ──
     // *(Platform_GameCore sig deref) -> winMain; +0x08 -> Platform_GameCore*
     addOffset("WinMain::platformGameCore", 0x08);
@@ -182,6 +190,11 @@ void SignatureManager::seedBedrock() {
     addOffset("ItemStack::auxValue", 0x20);
     // uint8
     addOffset("ItemStack::count", 0x22);
+
+    // void*** — points at the dispatcher object whose vtable slot 1 is hooked
+    addOffset("Packet::handler", 0x20);
+    // uint8 (ActorEventID) — sizeof(Packet)=0x30, +8 for runtimeID
+    addOffset("ActorEventPacket::eventID", 0x38);
 }
 
 } // namespace glacier::memory

@@ -89,6 +89,7 @@
     <ClCompile Include="src\hook\D3DHook.cpp" />
     <ClCompile Include="src\sdk\GameSDK.cpp" />
     <ClCompile Include="src\sdk\ItemRendering.cpp" />
+    <ClCompile Include="src\sdk\HitConfirmation.cpp" />
     <ClCompile Include="src\module\ModuleManager.cpp" />
     <ClCompile Include="src\module\modules\Fullbright.cpp" />
     <ClCompile Include="src\module\modules\Watermark.cpp" />
@@ -111,6 +112,7 @@
     <ClCompile Include="src\module\modules\LowDurabilityWarning.cpp" />
     <ClCompile Include="src\module\modules\ComboCounter.cpp" />
     <ClCompile Include="src\module\modules\HotbarHud.cpp" />
+    <ClCompile Include="src\module\modules\InventoryHud.cpp" />
   </ItemGroup>
 
   <ItemGroup>

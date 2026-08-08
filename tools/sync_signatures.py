@@ -176,6 +176,17 @@ SIGNATURES: list[SigEntry] = [
         "// the damage for every item, which is why this is a call and not an\n"
         "// offset read.",
     ),
+
+    # ── Hit confirmation (Combo Counter) ──
+    SigEntry(
+        "MinecraftPackets::createPacket", "MinecraftPackets::createPacket",
+        "Used once per session to construct a throwaway ActorEventPacket and\n"
+        "// read its dispatcher vtable — see sdk/HitConfirmation.cpp. Returns\n"
+        "// std::shared_ptr<Packet> BY VALUE (a hidden caller-owned return slot),\n"
+        "// which the caller must model explicitly since there is no declared\n"
+        "// C++ type here for the compiler to generate that call for us.",
+        blank_before=True,
+    ),
 ]
 
 OFFSETS: list[OffsetEntry] = [
@@ -269,6 +280,20 @@ OFFSETS: list[OffsetEntry] = [
     OffsetEntry("ItemStack::item", "", "", literal=0x08, comment="Item**; null == air"),
     OffsetEntry("ItemStack::auxValue", "", "", literal=0x20, comment="int16"),
     OffsetEntry("ItemStack::count", "", "", literal=0x22, comment="uint8"),
+
+    # ── Hit confirmation (Combo Counter) ──
+    # Neither of these has a CLASS_FIELD in the reference tree — Packet.h and
+    # ActorEventPacket.h declare their fields as plain members, and Flarial
+    # has no equivalent type to cross-check against. Both are computed by
+    # hand from Packet's declared layout under the standard MSVC x64 rules
+    # already assumed everywhere else in this file; see the derivation in
+    # sdk/HitConfirmation.cpp. Read only under an SEH guard.
+    OffsetEntry("Packet::handler", "", "", literal=0x20,
+                comment="void*** — points at the dispatcher object whose vtable slot 1 is "
+                        "hooked",
+                blank_before=True),
+    OffsetEntry("ActorEventPacket::eventID", "", "", literal=0x38,
+                comment="uint8 (ActorEventID) — sizeof(Packet)=0x30, +8 for runtimeID"),
 ]
 
 

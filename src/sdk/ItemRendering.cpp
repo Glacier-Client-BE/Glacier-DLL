@@ -84,9 +84,12 @@ bool drawBatchGuarded(void* itemRenderer, void* context,
         for (std::size_t i = 0; i < count; ++i) {
             const ItemDraw& draw = draws[i];
 
-            void* stack = (draw.ref.source == ItemRef::Source::Armor)
-                        ? sdk.rawArmorStack(draw.ref.index)
-                        : sdk.rawHotbarStack(draw.ref.index);
+            void* stack = nullptr;
+            switch (draw.ref.source) {
+                case ItemRef::Source::Armor:     stack = sdk.rawArmorStack(draw.ref.index);     break;
+                case ItemRef::Source::Hotbar:    stack = sdk.rawHotbarStack(draw.ref.index);    break;
+                case ItemRef::Source::Inventory: stack = sdk.rawInventoryStack(draw.ref.index); break;
+            }
             if (!stack) continue;
 
             // Glacier lays HUDs out in swapchain pixels; the game's UI renderer

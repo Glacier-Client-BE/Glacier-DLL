@@ -138,6 +138,20 @@ public:
     std::optional<float> lastAttackDistance(std::uint64_t* ageMs = nullptr) const;
     void recordAttack(void* attacker, void* target);   // called by the hook
 
+    // The raw timestamp lastAttackDistance's `ageMs` is computed from. Exposed
+    // separately so a caller can deduplicate against a specific attack event
+    // (Combo Counter) instead of re-deriving "is this the same attack" from an
+    // age that changes every time it's read.
+    std::uint64_t lastAttackStamp() const {
+        return m_attackStamp.load(std::memory_order_relaxed);
+    }
+
+    // Actor::invulnerableTime on the local player — Mob::hurtEffects sets this
+    // when the player takes damage, and it's what Latite's own Combo Counter
+    // resets on (a player who just got hit is not mid-combo). -1 if there is
+    // no local player right now.
+    int localPlayerInvulnerableTime() const;
+
     // ── Containers ──
     // All return empty/invalid data rather than throwing when the player isn't
     // in a world or the offsets didn't resolve, so HUD widgets can call them
@@ -152,6 +166,14 @@ public:
     // Needs nothing armor() does — PlayerInventory rather than the ECS — so it
     // has no equivalent of armorSupported().
     std::array<ItemStack, 9> hotbar() const;
+
+    // The full 36-slot player inventory: 0..8 hotbar, 9..35 the main grid,
+    // through the same Inventory::getItem virtual call rawHotbarStack already
+    // uses for the hotbar half. The "hotbar only" ceiling there was Glacier's
+    // own scope limit, not something the container enforces — Latite and
+    // Flarial read main-inventory slots through the identical call (see
+    // reference/latite's PlayerInventory.h / Inventory.h).
+    std::array<ItemStack, 36> inventory() const;
 
     // -1 if unavailable. Reads the same PlayerInventory::selectedSlot field
     // rawHotbarStack(-1) resolves internally; exposed separately so a HUD can
@@ -169,6 +191,11 @@ public:
     // "currently selected" on the hotbar.
     void* rawArmorStack(int slot) const;
     void* rawHotbarStack(int slot) const;
+
+    // Same contract, but 0..35 across the whole player inventory rather than
+    // 0..8 — for Inventory HUD's main-grid slots, which rawHotbarStack's
+    // narrower range deliberately excludes.
+    void* rawInventoryStack(int slot) const;
 
     // 1 / the game's GUI scale, i.e. GUI units per screen pixel. Item drawing
     // needs it to convert Glacier's pixel layout into the coordinates the

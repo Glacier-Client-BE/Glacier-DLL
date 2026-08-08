@@ -393,6 +393,17 @@ void GameSDK::recordAttack(void* attacker, void* target) {
     m_attackStamp.store(GetTickCount64(), std::memory_order_relaxed);
 }
 
+int GameSDK::localPlayerInvulnerableTime() const {
+    auto* lp = localPlayer();
+    if (!lp) return -1;
+
+    auto& sigs = SignatureManager::get();
+    const auto off = sigs.offset("Actor::invulnerableTime");
+    if (off == 0) return -1;
+
+    return memory::memberAt<int>(lp, off);
+}
+
 std::optional<float> GameSDK::lastAttackDistance(std::uint64_t* ageMs) const {
     const auto stamp = m_attackStamp.load(std::memory_order_relaxed);
     if (stamp == 0) return std::nullopt;
@@ -459,6 +470,31 @@ void* GameSDK::rawHotbarStack(int slot) const {
 
     const auto index = static_cast<std::uint32_t>(sigs.offset("Inventory::getItemVIndex"));
     return memory::callVirtualI<void*, int>(index, inventory, slot);
+}
+
+std::array<ItemStack, 36> GameSDK::inventory() const {
+    std::array<ItemStack, 36> out{};
+    for (int slot = 0; slot < 36; ++slot) {
+        out[static_cast<std::size_t>(slot)] = readStack(rawInventoryStack(slot));
+    }
+    return out;
+}
+
+void* GameSDK::rawInventoryStack(int slot) const {
+    if (slot < 0 || slot > 35) return nullptr;
+
+    auto* lp = localPlayer();
+    if (!lp) return nullptr;
+
+    auto& sigs = SignatureManager::get();
+    void* supplies = deref(lp, sigs.offset("Player::supplies"));
+    if (!supplies) return nullptr;
+
+    void* container = deref(supplies, sigs.offset("PlayerInventory::inventory"));
+    if (!container) return nullptr;
+
+    const auto index = static_cast<std::uint32_t>(sigs.offset("Inventory::getItemVIndex"));
+    return memory::callVirtualI<void*, int>(index, container, slot);
 }
 
 void* GameSDK::rawArmorStack(int slot) const {
