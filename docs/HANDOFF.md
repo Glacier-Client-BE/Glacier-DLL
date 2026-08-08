@@ -512,3 +512,82 @@ If the menu still doesn't respond to clicks, the next thing to check is whether
 `D3DHook::window()` is the window the cursor is actually over —
 `ScreenToClient` against the wrong HWND yields plausible-looking but wrong
 coordinates, which is indistinguishable from "hit-testing is broken".
+
+## Hit confirmation — `hitConfirmation` under `[Glacier]`, off by default
+
+Combo Counter used to count swings; it now confirms them, following
+reference/latite's `ComboCounter.cpp` — a swing starts a short window, and
+only a `HURT_ANIMATION` `ActorEventPacket` arriving inside it extends the
+combo. That needed a new subsystem, `sdk/HitConfirmation`, and it's the
+riskiest thing in the tree right now — riskier than the item-icon path ever
+was, because that one has a cross-check (`drawPending` compares two
+independent routes to the same `ClientInstance`) and this one doesn't.
+
+**What it does:** resolves `MinecraftPackets::createPacket`, calls it once to
+construct a throwaway `ActorEventPacket`, reads that packet's `handler` field
+to reach a dispatcher object, reads *that* object's vtable, and swaps vtable
+slot 1 — the same technique `reference/latite/src/client/memory/hook/hooks/PacketHooks.cpp`
+uses across ~140 packet types, scoped here to just the one Combo Counter
+needs. From then on, every `ActorEventPacket` the game receives calls
+Glacier's detour first, which reads the packet's `eventID` byte and records a
+timestamp if it's `HURT_ANIMATION`.
+
+**Why it's off by default, unlike `itemIcons`:**
+
+- `Packet::handler` (offset `0x20`) and `ActorEventPacket::eventID` (offset
+  `0x38`) are hand-derived from `Packet.h`'s declared field layout under
+  standard MSVC x64 struct rules — neither is a `CLASS_FIELD` the sync tool
+  extracted, and Flarial has no equivalent type to cross-check against. See
+  the comment on their `OffsetEntry` in `tools/sync_signatures.py` for the
+  full byte-by-byte derivation.
+- Bootstrapping the vtable means calling a function that returns
+  `std::shared_ptr<Packet>` **by value** — on MSVC x64 that's a hidden
+  caller-owned return-slot pointer ahead of the real argument, which Glacier
+  has to model explicitly since there's no declared C++ type here for a
+  compiler to generate that call correctly on its own. The resulting
+  `shared_ptr` is deliberately **never destroyed** (see the comment in
+  `HitConfirmation.cpp`) — modelling its destructor would mean guessing at an
+  atomic refcount decrement and a virtual deleter call with nothing to check
+  the guess against, so a small one-time leak was chosen over that.
+
+Both hand-derived reads happen only inside `__try`/`__except`, matching
+`ItemRendering`'s guard style — a wrong value degrades the feature (logged),
+it should not crash the game. That "should" is exactly why this stays
+opt-in: nobody has run it against a live client yet.
+
+**What's deliberately not ported from Latite:** their version also matches
+the hurt animation's `runtimeID` against the entity actually attacked.
+`Actor::getRuntimeID()` has no discoverable signature, offset, or vtable
+index anywhere in the reference sources — not a risk that was weighed, just
+genuinely unavailable without a live disassembler session. Without it,
+Glacier's version counts "a swing, then any actor's hurt animation shortly
+after" rather than confirming it was the same target — usually right, but an
+unrelated hurt animation nearby within the same window would count too.
+Closing this gap needs that vtable index or signature found first.
+
+**To verify:** set `hitConfirmation = true`, reload, and watch the console.
+`hit confirmation ready` means the hook installed; `hit confirmation
+unavailable — missing …` names which of the three prerequisites didn't
+resolve. With it enabled, hit something in a world with Combo Counter on —
+the counter should climb past 1x on consecutive landed hits and reset after
+~3 seconds idle or when you take damage. If the game crashes shortly after
+enabling it, this subsystem is the first suspect — turn it back off and say
+so; the two hand-derived offsets above are exactly where to start reading a
+crash address.
+
+## Other Phase 8 additions verified against this session's reasoning, not a client
+
+- **Inventory HUD** — the full 36-slot player inventory (3 main rows + the
+  hotbar row), through `GameSDK::inventory()`/`rawInventoryStack()`. Same
+  `Inventory::getItem` virtual call `rawHotbarStack` already used for slots
+  0..8; this just lifts the artificial ceiling that kept it hotbar-only.
+  Confirms working: equipped items and the main inventory grid both show
+  real icons (once `itemIcons` is on) in the same positions the vanilla
+  inventory screen uses.
+- **Armor HUD** — gained a numeric durability readout (`durabilitytext` /
+  `durabilitypercent`, bottom-left of each icon, mirroring the stack count's
+  bottom-right) and a `vertical` layout switch, both mirroring settings in
+  `reference/latite`'s `ArmorHUD.h`. One deviation: Latite's vertical mode
+  draws the numeric readout *outside* the item, in space horizontal mode
+  doesn't have; Glacier keeps it inside the icon in both modes rather than
+  having the feature exist in one orientation and not the other.
