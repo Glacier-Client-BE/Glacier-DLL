@@ -148,6 +148,17 @@ public:
     bool                     armorSupported() const;
     ItemStack                heldItem() const;
 
+    // All 9 hotbar slots, unlike heldItem() which is only the selected one.
+    // Needs nothing armor() does — PlayerInventory rather than the ECS — so it
+    // has no equivalent of armorSupported().
+    std::array<ItemStack, 9> hotbar() const;
+
+    // -1 if unavailable. Reads the same PlayerInventory::selectedSlot field
+    // rawHotbarStack(-1) resolves internally; exposed separately so a HUD can
+    // highlight the active slot without comparing raw pointers across two
+    // separate virtual calls.
+    int selectedHotbarSlot() const;
+
     // Raw game `ItemStack*` for a slot, or nullptr. These exist for the item
     // renderer, which has to hand the game back its own object rather than our
     // decoded copy.

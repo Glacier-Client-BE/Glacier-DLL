@@ -526,4 +526,24 @@ bool GameSDK::armorSupported() const {
     return SignatureManager::get().offset("Actor::entityContext") != 0;
 }
 
+std::array<ItemStack, 9> GameSDK::hotbar() const {
+    std::array<ItemStack, 9> out{};
+    for (int slot = 0; slot < 9; ++slot) {
+        out[static_cast<std::size_t>(slot)] = readStack(rawHotbarStack(slot));
+    }
+    return out;
+}
+
+int GameSDK::selectedHotbarSlot() const {
+    auto* lp = localPlayer();
+    if (!lp) return -1;
+
+    auto& sigs = SignatureManager::get();
+    void* supplies = deref(lp, sigs.offset("Player::supplies"));
+    if (!supplies) return -1;
+
+    const int slot = memory::memberAt<int>(supplies, sigs.offset("PlayerInventory::selectedSlot"));
+    return (slot >= 0 && slot <= 8) ? slot : -1;
+}
+
 } // namespace glacier::sdk
