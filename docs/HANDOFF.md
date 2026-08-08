@@ -22,10 +22,17 @@ after it is reference material that session can read from the repo.
 >
 > Reference clients (all copyleft-compatible, we're AGPLv3): Latite (GPLv3),
 > Flarial dll-oss (AGPLv3), Selaura (GPLv3), LeviLamina (LGPL-3.0, BDS-only —
-> names and struct shapes, never offsets). All four are checked out locally
-> under `reference/` — read the real source there before guessing at how
-> something works. Imported signature data lives only in
-> `src/memory/Signatures.cpp`, which is generated — see § "Signature sync".
+> names and struct shapes, never offsets). Three more are checked out under
+> `reference/` on a *different* basis — Horion (CC BY-NC 4.0), Onix-Client-v2
+> (proprietary, all rights reserved), Solstice-release (no stated license) —
+> the user has direct permission from their authors to use them as source,
+> which is not the same as a public copyleft license. Same rule applies
+> regardless: nothing from any of the seven gets inlined outside
+> `src/memory/Signatures.cpp` (see § "Signature sync"), and no code is copied
+> verbatim from the three permission-only ones — read them for technique and
+> for cross-checking struct offsets, same as the other four. All seven are
+> checked out locally under `reference/` — read the real source there before
+> guessing at how something works.
 
 ---
 
@@ -59,58 +66,76 @@ been re-tested since the fix landed.
 
 ### 1. An access violation inside Glacier.dll itself, cause unknown
 
-**Symptom, from a real log:** `access violation at Glacier.dll+0x296A6 —
-Glacier was: (idle)`, reading address `0x9C` (near-null). Happened ~2 minutes
-after attach, on the character-select/main-menu screen — the player never
-loaded into a world that session (no "world is loaded" log line ever
-printed). Five `config saved` lines preceded it, meaning the user was
-toggling module keybinds directly (that path doesn't require being in a
-world — see `ModuleManager::handleKey`).
+**Symptom, from two real logs now.** First: `access violation at
+Glacier.dll+0x296A6 — Glacier was: (idle)`, reading `0x9C` (near-null),
+~2 minutes after attach, on the character-select/main-menu screen — no world
+ever loaded that session. Five `config saved` lines preceded it. Second (new
+this session): `access violation at Glacier.dll+0x295E6 — Glacier was:
+(idle)`, reading `0xA0` (near-null), on build 1.26.40.5 (the targeted
+build, signatures all resolved 12/12) — again no world ever loaded
+(`first getLocalPlayer returned 0x0` was the last thing logged about the
+player), again preceded by several `config saved` lines a few seconds apart
+(three, ~7s/~13s/~2s apart) with nothing else logged in between. Both are
+near-null reads inside **Glacier's own address space** — a missing null
+check in our C++, not a wrong game offset — and both share the same
+preconditions: outside a world, multiple rapid `config saved` events
+(module-keybind toggles go through `ModuleManager::handleKey` on the window
+thread, which doesn't require being in a world — see that function).
 
-**Not yet found.** Audited `cursorGrabbed()`, `ModuleManager` (tick/render/
-handleKey), `Config::save()`, and every new module's `onTick()` for an
-unguarded null pointer reachable without a world loaded — nothing jumped
-out. This crash is in **Glacier's own address space**, not the game's, so
-it's very likely a bug in our C++, not a wrong game offset.
-**Next step:** get a repro. Ask exactly what was pressed/clicked in the
-~10 seconds before it happened. `Glacier.dll+0x296A6` needs symbols to mean
-anything — if the user can attach a debugger (even just `WinDbg`/VS "Attach
-to Process" after the crash, if a JIT debugger prompt appears) that address
-maps straight to a function and line.
+**Still not found**, despite two audit passes now. This session re-checked
+`ComboCounter`, `Stopwatch`, `Fullbright`, `HudEditor::update`, `GameSDK`'s
+`hotbar()`/`inventory()`/`armor()`/`localPlayer()` (all correctly null-guard
+on `localPlayer()` before touching anything), and `ModuleManager`/`Config`'s
+locking (deliberately lock-free on the module *list* — see the comment on
+`ModuleManager::modules()` — because the vector never resizes after
+`initialize()`; that's a documented design choice, not the bug). Nothing
+jumped out a second time either. Also checked the three new reference
+clients (Horion/Onix/Solstice) for anything resembling this failure mode —
+none of them are D2D-overlay-on-Bedrock clients, so nothing transferred.
+**Next step is unchanged: a repro.** Ask exactly what was pressed/clicked in
+the ~10 seconds before it happened, ideally which specific module keybinds.
+The offset differs between the two logs (`0x296A6` vs `0x295E6`, expected —
+different builds of Glacier.dll, no fixed base without symbols) so neither
+number is reusable across sessions; a debugger attach (`WinDbg`/VS "Attach to
+Process" after the crash, if a JIT debugger prompt appears) is what turns
+either address into an actual function and line.
 
-### 2. Cursor grab/release — fix shipped, needs a real test
+### 2. Movement/attack behind the menu — fixed this session, needs a real test
 
-The user reported: opening the menu shows no cursor, and the player can
-still move/look. Two separate things were fixed for this without being able
-to verify either in-game:
+The user reported (with a friend's log confirming it): opening the menu
+still let the player walk with WASD and swing/use with the mouse buttons.
+Root cause, once actually diagnosed: `cursorGrabbed()`/`releaseCursor()`
+**only ever gated camera look** in Bedrock — it has nothing to do with
+movement or attack input, which is a completely separate path the game
+processes regardless of cursor-grab state. A real Bedrock `Screen`
+intercepts that path before gameplay ever sees it; Glacier's menu is a D2D
+overlay, not a `Screen`, so nothing was intercepting it. This was never
+actually "unconfirmed cursor-grab behavior" (the framing in the previous
+version of this doc) — it was a completely unhandled path.
 
-- **No visible cursor was a certain bug, now fixed.** Glacier's menu is a
-  D2D overlay, not a real Bedrock screen, so the game never had a reason to
-  draw a cursor for it. `Menu::drawCursor()` now draws a small reticle at
-  the tracked mouse position, on top of everything, every frame the menu is
-  open.
-- **Movement not stopping is unconfirmed.** Read Latite's actual
-  `reference/latite/src/client/screen/Screen.cpp` /
-  `ScreenManager.cpp` — their `Screen::onUpdate` calls `releaseCursor()`
-  every update tick a screen is active, `ScreenManager::exitCurrentScreen`
-  calls `grabCursor()` once on close, and **Latite draws no cursor of its
-  own** (their `SetCursor` code is dead/commented out) and still shows one —
-  which only makes sense if `releaseCursor()` itself unhides the OS pointer.
-  Glacier's `applyCursorState` already matched that shape before this
-  session. What's new: `GameSDK::cursorControlWorking()` goes false the
-  first time a `releaseCursor()` call is *observed* not to change
-  `cursorGrabbed()` (logged as `releaseCursor called — cursorGrabbed() now
-  reports still grabbed (did NOT take effect)`), and
-  `Glacier::setCursorReleased`'s `ShowCursor`/`ClipCursor` fallback now
-  triggers on that, not just on the signature failing to resolve at all.
+**Fix:** `ui::InputGuard` (new, `src/ui/InputGuard.h/.cpp`) — a
+`WH_KEYBOARD_LL` + `WH_MOUSE_LL` pair on a dedicated pump thread, the same
+technique `NullMovement` already used for WASD, gated on `ui::Menu::open()`
+instead of always-on. Blocks W/A/S/D/Space/Shift/Ctrl and left/right/middle
+click at the OS input level while the menu is open. Deliberately does **not**
+touch mouse movement — blocking that would also freeze the OS cursor the
+menu's own `Input::pollMouse` (`GetCursorPos`-based) needs to draw/click
+things, so camera look stays `setCursorReleased`'s job, unchanged and still
+covered by item below.
 
-**To verify:** open the menu in a world and watch for the `releaseCursor
-called — cursorGrabbed() now reports …` line (prints once). "released (ok)"
-means the real mechanism works and the drawn reticle was the whole fix.
+**Cursor look itself is still the older, separately-unverified path** —
+`GameSDK::cursorControlWorking()`/`Glacier::setCursorReleased`'s
+`ShowCursor`/`ClipCursor` fallback, from a prior session. That part was never
+about movement at all (see above), only about whether the camera still
+turns while the menu is open.
+
+**To verify:** open the menu in a world and try to walk/attack — should be
+completely inert until the menu closes. Separately, watch for the
+`releaseCursor called — cursorGrabbed() now reports …` line (prints once)
+to check whether camera look is *also* frozen: "released (ok)" means it is;
 "did NOT take effect" followed by `falling back to ShowCursor` means the
 `ClientInstance::releaseCursor` signature resolved to the wrong function for
-this build — same failure class as the item-icon vptr bug in the history
-below, and the next step is re-deriving that one pattern specifically.
+this build.
 
 ### 3. Item-render race — fixed, needs a real test
 
@@ -155,12 +180,13 @@ the most recent log — `first item icon batch drawn (4 icons)` — before the
 unrelated Hotbar HUD race in item #3 above), the menu opening/closing and
 its module list/toggles/sliders (config saves reflected real interaction).
 
-**Not yet verified by anyone:** cursor grab/release actually pausing
-movement, the drawn menu cursor, the item-render race fix, hit confirmation,
-Inventory HUD's icon grid, and every Phase 8 module added this session
-(Speedometer, Walk Distance, Low Durability Warning, Combo Counter, Hotbar
-HUD, Frame Time Display, Stopwatch, DVD Screen, Custom Crosshair). None of
-these have a known problem — they're just unobserved.
+**Not yet verified by anyone:** `InputGuard`'s movement/attack block, cursor
+grab/release actually pausing camera look, the drawn menu cursor, the
+item-render race fix, hit confirmation, Inventory HUD's icon grid, and every
+Phase 8 module added earlier (Speedometer, Walk Distance, Low Durability
+Warning, Combo Counter, Hotbar HUD, Frame Time Display, Stopwatch, DVD
+Screen, Custom Crosshair). None of these have a known problem — they're just
+unobserved.
 
 ## Architecture facts that are easy to get wrong
 
@@ -280,7 +306,17 @@ first, which reads the packet's `eventID` byte and records a timestamp on
 
 - `Packet::handler` (offset `0x20`) and `ActorEventPacket::eventID` (offset
   `0x38`) are hand-derived from `Packet.h`'s declared field layout, not a
-  `CLASS_FIELD` — and Flarial has no equivalent type to cross-check against.
+  `CLASS_FIELD`, and Flarial has no equivalent type to cross-check against —
+  **but as of this session, both are independently confirmed** by two other
+  reverse-engineered clients: Horion's `SDK/Packet.h` lays out `Packet` with
+  its dispatcher pointer at `0x20` and `ActorEventPacket::eventId` at `0x30 +
+  0x08` = `0x38` (vtable `0x00`, header `0x08`..`0x1F`, dispatcher `0x20`,
+  base size `0x30`); Onix-Client-v2's `SDK/static/IPacket.h` independently
+  lays out the same `mHandler` field at `0x20` too. Both target older MC
+  versions (1.16–1.18-ish, not 1.26.40), so this is corroboration that the
+  offsets are architecturally stable across versions, not proof for this
+  exact build — the risk is real but meaningfully lower than "no cross-check
+  at all."
 - Bootstrapping the vtable means calling a function that returns
   `std::shared_ptr<Packet>` **by value** — a hidden caller-owned return-slot
   pointer ahead of the real argument on MSVC x64, modelled explicitly since
@@ -313,9 +349,11 @@ address.
 
 ## References
 
-All four reference clients are copyleft-compatible with our AGPLv3 (GPLv3
-material may be incorporated under GPLv3 §13; LGPL-3.0 likewise), and all
-four are checked out locally:
+The first four are copyleft-compatible with our AGPLv3 (GPLv3 material may be
+incorporated under GPLv3 §13; LGPL-3.0 likewise). The last three are checked
+out on a different basis — the user has direct permission from their authors,
+not a public copyleft grant — so treat them as read-for-technique /
+cross-check-only, never copy-paste source. All seven are checked out locally:
 
 | Project | License | Local path | Use it for |
 |---|---|---|---|
@@ -323,6 +361,9 @@ four are checked out locally:
 | **[Flarial (dll-oss)](https://github.com/flarialmc/dll-oss)** | AGPLv3 | `reference/flarial` | Rendering internals, the larger module catalog, item rendering. |
 | **[Selaura](https://github.com/selauraclient/selaura)** | GPLv3 | — | Small, clean framework. Good for scanning technique; no module catalog. |
 | **[LeviLamina](https://github.com/liteldev/levilamina)** | LGPL-3.0 | — | Named class/struct/method headers. **BDS-only** — client types don't exist there. Names and shapes, never offsets. |
+| **Horion** | CC BY-NC 4.0 | `reference/Horion/HorionContinued` | Used under author permission. Clean, fully-named `SDK/Packet.h` — independently confirms both of `HitConfirmation`'s hand-derived offsets (see § "Hit confirmation"). Older MC version than 1.26.40, so treat as corroboration, not proof. |
+| **Onix-Client-v2** | Proprietary, all rights reserved | `reference/Onix-Client-v2` | Used under author permission. `SDK/static/IPacket.h` has a fully-laid-out `Packet` class (targets 1.16/1.17) — second independent confirmation of `Packet::handler`'s offset. Per-MC-version SDK folders (`SDK/Minecraft_1_16_210`, etc.) if a version-specific struct is ever needed. |
+| **Solstice-release** | No stated license | `reference/Solstice-release` | Used under author permission. CMake-based, ImGui + Luau scripting + Kiero — mostly useful for its bundled third-party integration patterns (Kiero vtable discovery, MinHook usage) rather than Bedrock-specific struct data; not yet mined. |
 
 Attribution belongs in `docs/acknowledgements.md`; imported *data* belongs
 only in `src/memory/Signatures.cpp`. **The pack at
