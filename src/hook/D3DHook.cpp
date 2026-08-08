@@ -9,6 +9,7 @@
 #include <iterator>
 
 #pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
 
 namespace glacier {
@@ -130,6 +131,24 @@ bool D3DHook::initialize() {
     if (device) device->Release();
     if (swapChain) swapChain->Release();
 
+    // IDXGIFactory2::CreateSwapChainForHwnd, hooked purely to capture the
+    // ID3D12CommandQueue* the game creates its swap chain with — see the
+    // class comment. Not fatal if this fails: it only matters on a D3D12
+    // swap chain, and even then the overlay simply won't bridge onto it
+    // rather than anything crashing.
+    IDXGIFactory2* factory2 = nullptr;
+    if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory2))) && factory2) {
+        void** factoryVTable = *reinterpret_cast<void***>(factory2);
+        if (!hooks.create("IDXGIFactory2::CreateSwapChainForHwnd", factoryVTable[15],
+                          &D3DHook::hkCreateSwapChainForHwnd, &s_originalCreateSwapChainForHwnd)) {
+            LOG_WARN("could not hook CreateSwapChainForHwnd — if the game renders through "
+                     "D3D12 the overlay will not appear (no command queue to bridge with)");
+        }
+        factory2->Release();
+    } else {
+        LOG_WARN("CreateDXGIFactory1 failed — same D3D12 caveat as above");
+    }
+
     m_initialized = ok;
     return ok;
 }
@@ -138,8 +157,33 @@ void D3DHook::shutdown() {
     m_initialized = false;
     s_originalPresent = nullptr;
     s_originalResize  = nullptr;
+    s_originalCreateSwapChainForHwnd = nullptr;
     s_hookedVTable    = nullptr;
     s_vtableChecked.store(false, std::memory_order_relaxed);
+    if (s_commandQueue) {
+        s_commandQueue->Release();
+        s_commandQueue = nullptr;
+    }
+}
+
+HRESULT STDMETHODCALLTYPE D3DHook::hkCreateSwapChainForHwnd(
+        IDXGIFactory2* factory, IUnknown* device, HWND hwnd,
+        const DXGI_SWAP_CHAIN_DESC1* desc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fsDesc,
+        IDXGIOutput* output, IDXGISwapChain1** outSwapChain) {
+    // `device` is an ID3D12CommandQueue* when the caller is creating a D3D12
+    // swap chain (an ID3D11Device* for D3D11) — DXGI overloads the parameter
+    // by which interface the caller happens to pass. QueryInterface is the
+    // correct way to tell which, rather than assuming from context.
+    if (device && !s_commandQueue) {
+        ID3D12CommandQueue* queue = nullptr;
+        if (SUCCEEDED(device->QueryInterface(__uuidof(ID3D12CommandQueue),
+                                             reinterpret_cast<void**>(&queue))) && queue) {
+            s_commandQueue = queue;   // owning ref, released in shutdown()
+            LOG_INFO("captured the game's D3D12 command queue — the overlay can bridge onto "
+                     "its swap chain via D3D11On12 if needed");
+        }
+    }
+    return s_originalCreateSwapChainForHwnd(factory, device, hwnd, desc, fsDesc, output, outSwapChain);
 }
 
 HRESULT STDMETHODCALLTYPE D3DHook::hkPresent(IDXGISwapChain* sc, UINT sync, UINT flags) {
@@ -188,14 +232,25 @@ HRESULT STDMETHODCALLTYPE D3DHook::hkPresent(IDXGISwapChain* sc, UINT sync, UINT
     }
 
     if (self.m_present) {
+        // GetDevice(ID3D11Device) used to gate this whole call — nothing
+        // rendered at all if it failed, which it always does on a swap chain
+        // actually backed by D3D12 (GetDevice(IID_ID3D11Device) on a D3D12
+        // swap chain correctly returns E_NOINTERFACE; that is not an error,
+        // it is DXGI telling the truth). The callback never even used
+        // `device`/`context` for anything — ui::Renderer::beginFrame binds
+        // straight to the swap chain's back buffer — so the gate was pure
+        // liability: silent, total loss of the overlay on any machine or
+        // Bedrock build using the D3D12 renderer, with nothing logged.
+        // Called unconditionally now; device/context are best-effort extras
+        // for anything that might want them later, not a precondition.
         ID3D11Device*        device  = nullptr;
         ID3D11DeviceContext* context = nullptr;
-        if (SUCCEEDED(sc->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&device)))) {
+        if (SUCCEEDED(sc->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&device))) && device) {
             device->GetImmediateContext(&context);
-            self.m_present(sc, device, context);
-            if (context) context->Release();
-            device->Release();
         }
+        self.m_present(sc, device, context);
+        if (context) context->Release();
+        if (device) device->Release();
     }
 
     return s_originalPresent(sc, sync, flags);

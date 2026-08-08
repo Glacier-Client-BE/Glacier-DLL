@@ -453,25 +453,27 @@ void Glacier::setCursorReleased(bool released) {
     // Present hook — the game re-grabs the cursor on its own, so this could
     // never have been a one-shot call from here.
     //
-    // What is left is the fallback for when the cursor signatures are either
-    // missing entirely, or resolved to something that doesn't actually work
-    // (cursorControlWorking() goes false the first time applyCursorState
-    // observes a releaseCursor() call that didn't change cursorGrabbed()).
-    // The second case is only detected mid-session, not at the moment this
-    // function is first called — which is why the Present hook calls this
-    // every frame the menu is open rather than only on the toggle edge, so
-    // the fallback engages within a frame or two of the failure, not only
-    // on the next open/close.
-    if (sdk::GameSDK::get().cursorControlAvailable() && sdk::GameSDK::get().cursorControlWorking()) {
-        // If an earlier session had to fall back, undo it now so the OS cursor
-        // counter doesn't drift permanently out of balance.
-        if (!released && s_cursorFallback) {
-            while (ShowCursor(FALSE) >= 0) {}
-            s_cursorFallback = false;
-        }
-        return;
-    }
-
+    // This USED to skip everything below whenever
+    // `cursorControlWorking()` claimed the game's own releaseCursor() call
+    // was taking effect — on the theory that its self-reported
+    // `cursorGrabbed()` flag flipping was proof the cursor was actually
+    // free. It wasn't: a user reported the menu drawing correctly, cursorGrabbed()
+    // presumably flipping as expected, and the OS cursor still refusing to
+    // move freely — meaning whatever else is confining/hiding it (most
+    // plausibly the game's own per-frame `ClipCursor` call, independent of
+    // its grab-state bool) was never being undone, because this function
+    // returned before reaching the `ClipCursor`/`ShowCursor` calls below.
+    // Now it always runs both: the game's own mechanism first (still worth
+    // doing — it's what actually stops camera look), and this OS-level
+    // fallback unconditionally as well, every frame the menu is open. Both
+    // are individually idempotent (ClipCursor(nullptr) removing an
+    // already-absent clip is a no-op; the ShowCursor logic below is already
+    // edge-triggered), so running both costs nothing when the game's own
+    // path is in fact sufficient on its own.
+    //
+    // Re-evaluated every frame, not just on the open/close edge — the
+    // Present hook calls this every frame the menu is open.
+    //
     // Edge-triggered on s_cursorFallback, not level-triggered on `released`:
     // this is now called every frame the menu is open (see the Present hook
     // above), and ShowCursor's return value is its own running counter —

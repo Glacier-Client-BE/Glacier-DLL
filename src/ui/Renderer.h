@@ -8,6 +8,8 @@
 #include <d2d1_1.h>
 #include <d2d1_1helper.h>
 #include <d3d11.h>
+#include <d3d11on12.h>
+#include <d3d12.h>
 #include <dwrite.h>
 #include <dxgi.h>
 
@@ -127,6 +129,14 @@ private:
     bool createTarget(IDXGISwapChain* swapChain);
     void releaseTarget();
 
+    // Bridges a D3D12-backed swap chain onto the D2D path below via
+    // D3D11On12 — the same technique Latite's DXHooks.cpp/Renderer.cpp use.
+    // Returns a DXGI surface wrapping the D3D12 back buffer (or null if the
+    // swap chain isn't D3D12 either, or the command queue hasn't been
+    // captured yet), so createTarget() can hand it to the exact same
+    // D2D1CreateDeviceContext call the D3D11 path uses.
+    IDXGISurface* createDx12WrappedSurface(IDXGISwapChain* swapChain);
+
     // Text formats are immutable and reused every frame — creating one per
     // drawText call would allocate thousands of COM objects per second. Cached
     // as a member (not a function-local static) so shutdown() can release them.
@@ -156,6 +166,16 @@ private:
     ID2D1DeviceContext*   m_d2d    = nullptr;
     ID2D1Bitmap1*         m_target = nullptr;
     ID2D1SolidColorBrush* m_brush  = nullptr;
+
+    // D3D12 bridge (see createDx12WrappedSurface). The On12 device/context
+    // persist across resizes — only the wrapped back buffer is per-target.
+    // m_isDx12 sticks once true: the swap chain's backend doesn't change
+    // mid-session, so there's no reason to re-probe every frame.
+    bool                  m_isDx12            = false;
+    ID3D11On12Device*     m_d3d11on12         = nullptr;
+    ID3D11Device*         m_d3d11on12Device   = nullptr;
+    ID3D11DeviceContext*  m_d3d11on12Context  = nullptr;
+    ID3D11Resource*       m_wrappedBackBuffer = nullptr;
 
     float m_width  = 0;
     float m_height = 0;

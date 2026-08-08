@@ -1,5 +1,6 @@
 #include "Renderer.h"
 
+#include "../hook/D3DHook.h"
 #include "../util/Logger.h"
 
 #include <algorithm>
@@ -11,6 +12,7 @@
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
 #pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
 
 namespace glacier::ui {
@@ -73,6 +75,10 @@ void Renderer::shutdown() {
     releaseTarget();
     releaseFormats();
     safeRelease(m_dwrite);
+    safeRelease(m_d3d11on12);
+    safeRelease(m_d3d11on12Context);
+    safeRelease(m_d3d11on12Device);
+    m_isDx12 = false;
 
     m_ready = false;
     m_drawing = false;
@@ -87,6 +93,89 @@ void Renderer::releaseTarget() {
     safeRelease(m_brush);
     safeRelease(m_target);
     safeRelease(m_d2d);
+    // Per-target only — m_d3d11on12/m_d3d11on12Device/m_d3d11on12Context are
+    // NOT released here. They bridge the game's D3D12 device itself, not any
+    // one back buffer, and stay alive across resizes exactly like the game's
+    // own D3D12 device does; only the wrapped resource is tied to a specific
+    // back buffer and needs recreating.
+    safeRelease(m_wrappedBackBuffer);
+}
+
+IDXGISurface* Renderer::createDx12WrappedSurface(IDXGISwapChain* swapChain) {
+    ID3D12Device* device12 = nullptr;
+    if (FAILED(swapChain->GetDevice(__uuidof(ID3D12Device), reinterpret_cast<void**>(&device12)))
+        || !device12) {
+        // Neither a D3D11 surface nor a D3D12 device — nothing more to try.
+        return nullptr;
+    }
+
+    ID3D12CommandQueue* queue = D3DHook::get().commandQueue();
+    if (!queue) {
+        device12->Release();
+        warnOnce("game is rendering through D3D12 but no command queue has been captured yet "
+                 "(see D3DHook's CreateSwapChainForHwnd hook) — overlay unavailable this frame");
+        return nullptr;
+    }
+
+    if (!m_d3d11on12) {
+        constexpr D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_0 };
+        IUnknown* queues[] = { queue };
+        // BGRA support is required: D2D draws through a BGRA bitmap, and
+        // without this flag the interop device would reject binding one.
+        const HRESULT hr = D3D11On12CreateDevice(
+            device12, D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels, 1,
+            reinterpret_cast<IUnknown* const*>(queues), 1, 0,
+            &m_d3d11on12Device, &m_d3d11on12Context, nullptr);
+        if (FAILED(hr) || !m_d3d11on12Device) {
+            device12->Release();
+            LOG_ERROR("D3D11On12CreateDevice failed: {:#x} — overlay cannot bridge onto "
+                      "this D3D12 swap chain", static_cast<unsigned>(hr));
+            return nullptr;
+        }
+        if (FAILED(m_d3d11on12Device->QueryInterface(__uuidof(ID3D11On12Device),
+                                                      reinterpret_cast<void**>(&m_d3d11on12)))
+            || !m_d3d11on12) {
+            device12->Release();
+            LOG_ERROR("ID3D11On12Device QueryInterface failed — overlay cannot bridge onto "
+                      "this D3D12 swap chain");
+            return nullptr;
+        }
+        LOG_INFO("bridged the overlay onto the game's D3D12 swap chain via D3D11On12");
+    }
+
+    ID3D12Resource* backBuffer12 = nullptr;
+    const HRESULT hr = swapChain->GetBuffer(0, __uuidof(ID3D12Resource),
+                                            reinterpret_cast<void**>(&backBuffer12));
+    device12->Release();
+    if (FAILED(hr) || !backBuffer12) {
+        LOG_ERROR("could not get the D3D12 back buffer: {:#x}", static_cast<unsigned>(hr));
+        return nullptr;
+    }
+
+    D3D11_RESOURCE_FLAGS flags{ D3D11_BIND_RENDER_TARGET };
+    ID3D11Resource* wrapped = nullptr;
+    const HRESULT wrapHr = m_d3d11on12->CreateWrappedResource(
+        backBuffer12, &flags, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_PRESENT,
+        __uuidof(ID3D11Resource), reinterpret_cast<void**>(&wrapped));
+    backBuffer12->Release();
+    if (FAILED(wrapHr) || !wrapped) {
+        LOG_ERROR("CreateWrappedResource failed: {:#x}", static_cast<unsigned>(wrapHr));
+        return nullptr;
+    }
+
+    IDXGISurface* wrappedSurface = nullptr;
+    const HRESULT surfHr = wrapped->QueryInterface(__uuidof(IDXGISurface),
+                                                    reinterpret_cast<void**>(&wrappedSurface));
+    if (FAILED(surfHr) || !wrappedSurface) {
+        LOG_ERROR("wrapped D3D12 back buffer does not expose IDXGISurface: {:#x}",
+                  static_cast<unsigned>(surfHr));
+        wrapped->Release();
+        return nullptr;
+    }
+
+    m_wrappedBackBuffer = wrapped;   // released in releaseTarget()
+    m_isDx12 = true;
+    return wrappedSurface;
 }
 
 bool Renderer::createTarget(IDXGISwapChain* swapChain) {
@@ -96,9 +185,17 @@ bool Renderer::createTarget(IDXGISwapChain* swapChain) {
     HRESULT hr = swapChain->GetBuffer(0, __uuidof(IDXGISurface),
                                       reinterpret_cast<void**>(&surface));
     if (FAILED(hr) || !surface) {
-        LOG_ERROR("could not get the back buffer as a DXGI surface: {:#x}",
-                  static_cast<unsigned>(hr));
-        return false;
+        // Not necessarily an error yet — Bedrock's back buffer is only an
+        // IDXGISurface when the game is rendering through D3D11. On D3D12 the
+        // back buffer is an ID3D12Resource, which does not implement
+        // IDXGISurface at all, so this QueryInterface-style failure is
+        // completely expected there. Try the D3D12 bridge before giving up.
+        surface = createDx12WrappedSurface(swapChain);
+        if (!surface) {
+            LOG_ERROR("could not get the back buffer as a DXGI surface (D3D11) or bridge it "
+                      "via D3D11On12 (D3D12): {:#x}", static_cast<unsigned>(hr));
+            return false;
+        }
     }
 
     DXGI_SURFACE_DESC sd{};
@@ -193,6 +290,14 @@ bool Renderer::beginFrame(IDXGISwapChain* swapChain, ID3D11Device* /*device*/,
         if (!createTarget(swapChain)) return false;
     }
 
+    // The D3D12 bridge: the wrapped resource has to be "acquired" (handed
+    // from the game's D3D12 command queue to the interop D3D11 context)
+    // before D2D can draw into it, and "released" back before Present submits
+    // the D3D12 command list that actually presents it — see endFrame.
+    if (m_isDx12) {
+        m_d3d11on12->AcquireWrappedResources(&m_wrappedBackBuffer, 1);
+    }
+
     m_d2d->SetTarget(m_target);
     m_d2d->BeginDraw();
 
@@ -212,6 +317,15 @@ void Renderer::endFrame() {
     const HRESULT hr = m_d2d->EndDraw();
     m_d2d->SetTarget(nullptr);
     m_drawing = false;
+
+    if (m_isDx12) {
+        // Hand the wrapped resource back to D3D12 and flush the D3D11On12
+        // context so the draw commands are actually submitted onto the
+        // game's queue before its own Present call runs — without the flush
+        // here, D3D11On12 is free to batch them arbitrarily late.
+        m_d3d11on12->ReleaseWrappedResources(&m_wrappedBackBuffer, 1);
+        m_d3d11on12Context->Flush();
+    }
 
     if (FAILED(hr)) {
         // D2DERR_RECREATE_TARGET is routine — it means the surface went away
