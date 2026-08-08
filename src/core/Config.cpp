@@ -107,7 +107,12 @@ void applyKey(Module& module, const std::string& key, const std::string& value) 
             break;
         }
         case SettingType::Int:
-        case SettingType::Key: {
+        case SettingType::Key:
+        case SettingType::Enum: {
+            // Enum persists as its index. Storing the option's *name* would be
+            // friendlier to hand-edit but would break the moment an option is
+            // renamed, and Setting::selectedIndex() already clamps an index
+            // that has fallen off the end of a shortened list.
             int v = 0;
             if (parseInt(value, v)) setting->set(v);
             else LOG_WARN("config: bad int for {}.{} = '{}'", module.name(), key, value);
@@ -308,6 +313,7 @@ bool Config::save() {
                     }
                     case SettingType::Int:
                     case SettingType::Key:
+                    case SettingType::Enum:
                         out << setting.asInt();
                         break;
                     case SettingType::Color: {

@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <variant>
+#include <vector>
 
 // A single configurable value attached to a module. The variant keeps storage
 // compact while letting the menu render each setting generically from its type
@@ -10,7 +12,7 @@
 // glue code, which is what keeps adding a module a one-file change.
 namespace glacier {
 
-enum class SettingType { Bool, Float, Int, Key, Color };
+enum class SettingType { Bool, Float, Int, Key, Color, Enum };
 
 class Setting {
 public:
@@ -33,6 +35,32 @@ public:
     Setting(std::string id, std::string label, KeyTag, int vk)
         : m_id(std::move(id)), m_label(std::move(label)),
           m_type(SettingType::Key), m_value(vk) {}
+
+    // A choice from a fixed list, stored as the selected index.
+    //
+    // Distinct from Int for the same reason Key and Color are: an Int renders
+    // as a slider, and dragging a slider between "Left", "Center" and "Right"
+    // is a genuinely bad control for a choice — you cannot see the options,
+    // and the label only tells you where you landed after you let go. The
+    // menu renders this as a row of chips instead.
+    struct EnumTag {};
+    Setting(std::string id, std::string label, EnumTag,
+            std::vector<std::string> options, int value = 0)
+        : m_id(std::move(id)), m_label(std::move(label)),
+          m_type(SettingType::Enum), m_value(value),
+          m_min(0.0f), m_max(static_cast<float>(options.empty() ? 0 : options.size() - 1)),
+          m_step(1.0f), m_options(std::move(options)) {}
+
+    const std::vector<std::string>& options() const { return m_options; }
+
+    // Clamped, so a config file naming an option that no longer exists reads
+    // back as the first one rather than indexing off the end.
+    int selectedIndex() const {
+        const int i = asInt();
+        if (m_options.empty()) return 0;
+        return i < 0 ? 0 : (i >= static_cast<int>(m_options.size())
+                                ? static_cast<int>(m_options.size()) - 1 : i);
+    }
 
     // Color, stored as 0xAARRGGBB in the int slot. Tagged rather than inferred
     // so the menu renders a swatch and channel sliders instead of a number.
@@ -109,6 +137,8 @@ private:
     float m_min  = 0.0f;
     float m_max  = 1.0f;
     float m_step = 0.1f;
+    // Empty for every type but Enum.
+    std::vector<std::string> m_options;
 };
 
 } // namespace glacier

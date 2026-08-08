@@ -88,6 +88,14 @@ void Renderer::shutdown() {
     releaseFormats();
     safeRelease(m_iconFont);
     safeRelease(m_iconCollection);
+    // Unregistered before release, and only after everything that reads font
+    // data through it is gone — same ownership rule as ensureIconFont.
+    if (m_iconLoader && m_iconFactory) {
+        static_cast<IDWriteFactory5*>(m_iconFactory)->UnregisterFontFileLoader(
+            static_cast<IDWriteInMemoryFontFileLoader*>(m_iconLoader));
+    }
+    safeRelease(m_iconLoader);
+    safeRelease(m_iconFactory);
     m_iconFamily.clear();
     m_glyphCoverage.clear();
     m_iconResolved = false;
@@ -530,6 +538,21 @@ void Renderer::ensureIconFont() {
     }
 
     if (ok) {
+        // The loader and the factory it is registered against are KEPT, not
+        // released here. RegisterFontFileLoader deliberately does not take a
+        // reference — DirectWrite documents that the application owns the
+        // loader and must keep it alive until UnregisterFontFileLoader, so
+        // that a loader implemented by the app cannot form a reference cycle
+        // with the factory. Releasing it here destroyed the object that every
+        // read of the font's actual bytes goes through, and the very next call
+        // (IDWriteFont::HasCharacter, which has to read the cmap) went through
+        // a freed vtable. The symptom was a log that ended, with no exception
+        // and no detach, immediately after the "icon font loaded" line below.
+        m_iconLoader  = loader;
+        m_iconFactory = factory5;
+        loader   = nullptr;
+        factory5 = nullptr;
+
         m_iconCollection = collection;   // kept; released in shutdown()
         collection = nullptr;
         std::string family;
@@ -544,12 +567,12 @@ void Renderer::ensureIconFont() {
         m_iconFamily.clear();
     }
 
+    // Only ever non-null on the failure path now — see the note above.
     safeRelease(collection);
     safeRelease(set);
     safeRelease(builder);
     safeRelease(file);
-    // The loader stays registered for as long as the collection is alive; the
-    // factory keeps its own reference, so dropping ours here is correct.
+    if (loader && factory5) factory5->UnregisterFontFileLoader(loader);
     safeRelease(loader);
     safeRelease(factory5);
 }

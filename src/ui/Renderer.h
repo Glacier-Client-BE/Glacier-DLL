@@ -206,6 +206,12 @@ private:
 
     IDWriteFontCollection* m_iconCollection = nullptr;
     IDWriteFont*           m_iconFont       = nullptr;   // for HasCharacter
+    // Both held for the renderer's lifetime. RegisterFontFileLoader does not
+    // AddRef the loader — the application owns it, and everything that reads
+    // the font's bytes goes through it. Typed as IUnknown so the header does
+    // not have to pull in dwrite_3.h for two members.
+    IUnknown*              m_iconLoader     = nullptr;
+    IUnknown*              m_iconFactory    = nullptr;
     std::wstring           m_iconFamily;
     bool                   m_iconResolved   = false;
     std::unordered_map<wchar_t, bool> m_glyphCoverage;
