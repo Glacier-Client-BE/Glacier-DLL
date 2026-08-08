@@ -423,40 +423,59 @@ Three things to read off it:
 Some reported exceptions are first-chance and handled normally downstream; the
 last line before the log ends is the informative one. Reporting stops after 5.
 
-## The world-load crash
+## The world-load crash — root-caused, fix unverified in-game
 
 **Symptom:** injected fine, then the game crashed after loading a world.
 
-**Suspect: the `ScreenView::setupAndRender` hook.** It was the only thing
-phase 7 added that runs unconditionally inside a world — `readStack`'s new
-virtual call needs Armor HUD enabled, and the cursor calls only fire on a menu
-toggle. It is also the least verifiable thing in the tree: the pattern matches
-a **call site**, and the function address is decoded from the displacement at
-+1. If that decode lands on anything other than the intended function, calling
-through it with a two-argument signature corrupts the stack the first time the
-UI renders — which is exactly when a world finishes loading.
+**Root cause, found in commit `d997063`:** not a signature, not the context
+buffer size — `MinecraftUIRenderContext::clientInstance`/`screenContext` were
+seeded at `0x00`/`0x08` from Latite's header declaration order. That class
+declares its two pointers first but *also* declares virtual functions, so MSVC
+puts the vtable pointer at `0x00` and the real members land at `0x08`/`0x10`.
+Glacier was passing a vtable pointer as the `ClientInstance`, deriving a
+garbage `MinecraftGame` from it (`vptr + 0x1A0`), and handing both to the
+game's render-context constructor — which dereferenced them and killed the
+process. The evidence was in the first crash log the whole time: the printed
+`cinst` sat in the module image range (`.rdata`, i.e. a vtable) while
+`screenContext` was byte-identical to the `ClientInstance` already resolved
+through the unrelated global walk — two independent routes disagreeing, just
+not being compared. Two earlier builds spent effort widening the context
+buffer instead, which was never the problem.
 
-**This is a hypothesis, not a confirmed diagnosis.** Nobody has read a crash
-address. What has changed is the blast radius:
+**What changed as a result** (all in `src/sdk/ItemRendering.cpp`):
 
-- Item icons are **off by default** (`itemIcons` under `[Glacier]`), and the
-  hook is not installed at all unless enabled. If the crash is gone with the
-  default config, the suspect is confirmed.
-- The two calls into game code are wrapped in structured-exception guards, so
-  a wrong address now disables the feature and logs which call faulted instead
-  of ending the session.
+- The offsets are corrected (Flarial independently lists the same `0x8`/`0x10`).
+- `drawPending` now cross-checks the context's `ClientInstance` against the
+  object graph's own — two independent routes to the same object — and
+  disables itself with a named `LOG_ERROR` on mismatch instead of calling the
+  constructor with a wrong pointer.
+- `itemIcons` is back to **on by default** (`ItemRendering::m_enabled = true`)
+  now that the cause is understood rather than unknown. `docs/HANDOFF.md` used
+  to say off-by-default here; that was true before this commit and is stale —
+  trust `src/sdk/ItemRendering.h`'s own comment over this file if they ever
+  disagree again.
+- The two calls that actually enter game code with guessed arguments
+  (`BaseActorRenderContext`'s constructor, `ItemRenderer::renderGuiItemNew`)
+  stay wrapped in structured-exception guards from the earlier hardening pass,
+  so a *still*-wrong offset disables the feature and names which call faulted
+  rather than ending the session.
 
-**To confirm or refute, in order:**
+**Still unverified in-game.** The vptr explanation fits the evidence in the
+log, and the cross-check plus guards mean a wrong offset should now degrade
+rather than crash — but nobody has confirmed a crash-free world load with
+`itemIcons = true` (the current default) since this fix landed. If a world
+load still crashes:
 
-1. Run with defaults. Still crashes → it is **not** item rendering; the next
-   suspects are the `Platform_GameCore` deref move (`GameSDK::resolve` now
-   trusts the table's own deref instead of calling `offsetFromSig` itself) and
-   the new per-frame `inGame()` walk in the Present hook.
-2. No crash → set `itemIcons = true` and reload. If it now logs `item icons
-   disabled: '…' faulted`, the guard caught it and the named call is wrong.
-3. If it crashes *without* logging, the fault is somewhere the guards don't
-   cover — most likely the `BaseActorRenderContext` buffer being too small
-   (`0x500` is upstream's own admitted over-estimate, not a measured size).
+1. No `item icons disabled: '…' faulted` in the log before the crash → the
+   fault is somewhere the guards don't cover, or is unrelated to item
+   rendering entirely — next suspects are the `Platform_GameCore` deref move
+   (`GameSDK::resolve` trusting the table's own deref) and the per-frame
+   `inGame()` walk in the Present hook.
+2. Set `itemIcons = false` and reload. Still crashes → it was never item
+   rendering. No crash → the vptr fix didn't fully hold; re-check the cross-check
+   log line (`item icons disabled: MinecraftUIRenderContext gave ClientInstance
+   … but the object graph says …`) for a mismatch that's being hit every frame
+   without actually crashing yet.
 
 ## Verifying phases 6 and 7
 
@@ -467,10 +486,10 @@ proves it compiles.
 |---|---|---|
 | 1 | `ui::Input::pollMouse` samples `GetCursorPos` + `GetAsyncKeyState` once per frame from the Present hook; WndProc no longer produces mouse position or button edges (it keeps only the wheel). | Open the menu and move the mouse: a sidebar category should highlight under the cursor, and clicking one should switch the module list. |
 | 2 | No separate fix — the HUD editor reads the same `Input`. | With the menu open, drag the Coordinates widget; it should follow the cursor and stay where dropped after a close/reopen. |
-| 3 | `GameSDK::setCursorGrabbed` calls `ClientInstance::grabCursor` / `releaseCursor`; `Glacier::setCursorReleased` drives it and only falls back to `ShowCursor` when the call is unavailable. | With the menu open you should not be able to move or look. On attach, no `grabCursor/releaseCursor not resolved` warning in the console. |
+| 3 | `GameSDK::applyCursorState` calls `ClientInstance::grabCursor` / `releaseCursor`, re-asserting the release every frame the menu is open and grabbing once on close (see "Pausing the game: release is not a one-shot" above); `Glacier::setCursorReleased` drives it and only falls back to `ShowCursor` when the call is unavailable. | With the menu open you should not be able to move or look. On attach, no `grabCursor/releaseCursor not resolved` warning in the console. |
 | 4 | Fullbright's gamma setting is now `15.0` default over a `0..25` range. | Enabling Fullbright at night, or in a cave, visibly brightens the world. |
 
-| 5 | `ItemRendering` hooks `ScreenView::setupAndRender` and replays icon requests inside the game's UI pass. Armor HUD submits one per slot. **Off by default** — see the crash section above. | With `itemIcons = true`: console shows `item rendering ready` at attach, and equipped armor shows real icons. |
+| 5 | `ItemRendering` hooks `ScreenView::setupAndRender` and replays icon requests inside the game's UI pass. Armor HUD submits one per slot. **On by default** as of `d997063` — see "The world-load crash" above; the earlier off-by-default state is stale. | With `itemIcons = true` (the default): console shows `item rendering ready` at attach, and equipped armor shows real icons. |
 | — | HUD and menu render only when a `LocalPlayer` exists, matching Latite/Flarial. | Nothing of Glacier's is drawn on the main menu; `G`/`M` does nothing there. Both come back on entering a world. |
 | — | The game window is retitled to name the client and the **detected** build. | Title bar reads `Glacier Client for Minecraft: Bedrock Edition 1.26.40`. If the number differs from 1.26.40, that mismatch is the explanation for anything else behaving oddly. Unloading with `END` restores the original title. |
 | — | `readStack` now fills `maxDurability` via `Item::getMaxDamage` and reads damage through `ItemStackBase::getDamageValue`. | Durability bars appear under damaged armor and shrink as it wears. They have **never** drawn before this, so "no bars" is a failure, not the status quo. |
