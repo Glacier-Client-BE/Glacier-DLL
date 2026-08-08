@@ -3,6 +3,7 @@
 #include "../../sdk/GameSDK.h"
 #include "../../sdk/ItemRendering.h"
 
+#include <algorithm>
 #include <string>
 
 namespace glacier {
@@ -16,6 +17,13 @@ namespace glacier {
 //
 // It fails soft in the ordinary cases (not in a world, component absent):
 // armor() returns invalid stacks and empty slots are drawn.
+//
+// The look is deliberately chrome-less, matching Latite's ArmorHUD (see
+// reference/latite/src/client/feature/module/modules/hud/ArmorHUD.cpp): no box,
+// no outline, no fill — just the item icon the game itself draws, with a
+// durability readout and stack count laid directly over it. A backing plate
+// was tried and dropped; it competed with the icon underneath rather than
+// framing it, which is the opposite of what a plate is for.
 class ArmorHud final : public HudModule {
 public:
     ArmorHud()
@@ -86,7 +94,8 @@ public:
             const float size = cell * 0.42f;
             const float w = r.measureText(msg, size, ui::FontWeight::Normal);
             r.drawText(msg, ui::Rect{ x, origin.y, w + 4.0f, cell },
-                       textColor().withAlpha(0.5f), size);
+                       textColor().withAlpha(0.5f), size, ui::TextAlign::Left,
+                       ui::FontWeight::Normal, textShadow());
             x += w + gap;
         }
 
@@ -114,38 +123,48 @@ private:
         auto& items = sdk::ItemRendering::get();
         const ui::Rect box{ x, y, cell, cell };
 
-        // The icon is drawn by the game, one pass earlier and therefore *under*
-        // this overlay — so when icons are available the slot gets an outline
-        // only. Filling it, even at a third alpha, would wash out the very
-        // thing the fill used to stand in for.
+        // Our engine's fallback only: when the game's item renderer isn't
+        // reachable there is nothing else on screen to say "a slot lives
+        // here", so a faint outline stands in for the icon. The references
+        // never need this — their DrawUtil can always ask the game to draw an
+        // item — so it is drawn only in the one case they never hit.
         if (!items.available()) {
-            r.fillRoundedRect(box, 3.0f, ui::Color::rgba(0x55101418));
+            r.strokeRoundedRect(box, cell * 0.12f, ui::Color::rgba(0x33FFFFFF), 1.0f);
         }
-        r.strokeRoundedRect(box, 3.0f, ui::Color::rgba(0x445A6070), 1.0f);
 
         if (!stack.valid) return;
 
-        // Ask the game to draw the real item here. Inset slightly so the icon
-        // doesn't touch the outline, and leave the bottom strip clear for the
-        // durability bar.
         if (items.available()) {
-            const float inset = cell * 0.10f;
+            const float inset = cell * 0.06f;
             items.submit(sdk::ItemDraw{ ref, x + inset, y + inset,
                                         cell - inset * 2.0f, 1.0f });
         }
 
+        // A thin colour-coded rail flush with the icon's bottom edge, not a
+        // boxed gauge — the same "decoration earns its keep or it's gone" call
+        // as dropping the slot outline. A 1px dark stroke under the fill is the
+        // only concession to legibility, since there is no backing plate left
+        // to guarantee contrast against a bright sky.
         if (settingBool("bars", true) && stack.maxDurability > 0) {
             const float frac = stack.durabilityFraction();
-            const ui::Rect track{ x + 3.0f, box.bottom() - 6.0f, cell - 6.0f, 3.0f };
-            r.fillRect(track, ui::Color::rgba(0x99000000));
-            r.fillRect(ui::Rect{ track.x, track.y, track.w * frac, track.h },
-                       durabilityColor(frac));
+            const float barH = std::max(2.0f, cell * 0.07f);
+            const ui::Rect rail{ x + cell * 0.08f, box.bottom() - barH, cell - cell * 0.16f, barH };
+            r.fillRoundedRect(rail, barH * 0.5f, ui::Color::rgba(0x80000000));
+            r.fillRoundedRect(ui::Rect{ rail.x, rail.y, rail.w * frac, rail.h },
+                               barH * 0.5f, durabilityColor(frac));
         }
 
         if (settingBool("counts", true) && stack.count > 1) {
-            r.drawText(std::to_string(stack.count),
-                       ui::Rect{ x, y + cell * 0.18f, cell - 3.0f, cell * 0.5f },
-                       textColor(), cell * 0.38f, ui::TextAlign::Right, ui::FontWeight::SemiBold);
+            const std::string text = std::to_string(stack.count);
+            const float size = cell * 0.36f;
+            const ui::Rect countBox{ x, y + cell * 0.16f, cell - cell * 0.08f, cell * 0.5f };
+            // Manual shadow rather than the shared drawLine() helper: this is
+            // the one piece of HUD text drawn straight onto game content with
+            // nothing behind it at all, so the shadow is load-bearing, not a
+            // style default.
+            r.drawText(text, ui::Rect{ countBox.x + 1.0f, countBox.y + 1.0f, countBox.w, countBox.h },
+                       ui::Color{ 0.0f, 0.0f, 0.0f, 0.65f }, size, ui::TextAlign::Right, ui::FontWeight::SemiBold);
+            r.drawText(text, countBox, textColor(), size, ui::TextAlign::Right, ui::FontWeight::SemiBold);
         }
     }
 

@@ -33,16 +33,24 @@ public:
     // "Visual" — a reach readout is a combat tool and a keystroke display is a
     // movement one. Hardcoding it piles every widget into one menu tab and
     // leaves the rest empty.
+    // `defaultBackground` exists because not every widget wants the box.
+    // Latite's own HUDModule never draws a background during normal play —
+    // renderFrame() (a dark fill + border) is reserved for the editor's
+    // "this one is selected" highlight, not gameplay. A plain readout backed
+    // by nothing but shadowed text is the reference look, not a fallback; a
+    // widget that genuinely benefits from a backing plate (none currently do)
+    // can still opt in by passing true.
     HudModule(std::string name, std::string description, Category category,
               int keybind = 0,
               float defaultX = 0.02f, float defaultY = 0.02f,
-              std::uint32_t defaultColor = 0xFFFFFFFF)
+              std::uint32_t defaultColor = 0xFFFFFFFF,
+              bool defaultBackground = false)
         : Module(std::move(name), std::move(description), category, keybind) {
         addSetting(Setting{ "hud.x", "X", defaultX, 0.0f, 1.0f, 0.001f });
         addSetting(Setting{ "hud.y", "Y", defaultY, 0.0f, 1.0f, 0.001f });
         addSetting(Setting{ "hud.scale", "Scale", 1.0f, 0.5f, 3.0f, 0.05f });
         addSetting(Setting{ "hud.color", "Color", Setting::ColorTag{}, defaultColor });
-        addSetting(Setting{ "hud.background", "Background", true });
+        addSetting(Setting{ "hud.background", "Background", defaultBackground });
         addSetting(Setting{ "hud.bgcolor", "Background color",
                             Setting::ColorTag{}, kDefaultBackground });
 
@@ -111,7 +119,7 @@ public:
 
         if (content.w > 0.0f && content.h > 0.0f) {
             const float radius = cornerRadius(frame);
-            if (settingBool("hud.background", true)) {
+            if (settingBool("hud.background", false)) {
                 r.fillRoundedRect(frame, radius,
                                   ui::Color::rgba(settingColor("hud.bgcolor", kDefaultBackground)));
             }
