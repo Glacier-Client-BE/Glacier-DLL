@@ -54,6 +54,9 @@ struct Rect {
     constexpr bool contains(float px, float py) const {
         return px >= x && px < x + w && py >= y && py < y + h;
     }
+    constexpr bool intersects(const Rect& o) const {
+        return x < o.x + o.w && x + w > o.x && y < o.y + o.h && y + h > o.y;
+    }
     constexpr Rect inset(float d) const { return Rect{ x + d, y + d, w - 2 * d, h - 2 * d }; }
 };
 

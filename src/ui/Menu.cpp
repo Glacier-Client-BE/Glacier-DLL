@@ -84,6 +84,7 @@ void Menu::render() {
         kPanelW, kPanelH
     };
     r.fillRoundedRect(panel, 10.0f, kPanel);
+    m_panelRect = panel;
 
     const Rect sidebar{ panel.x, panel.y, kSidebarW, panel.h };
     drawSidebar(sidebar);

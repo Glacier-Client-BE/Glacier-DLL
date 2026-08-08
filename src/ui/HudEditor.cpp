@@ -1,6 +1,7 @@
 #include "HudEditor.h"
 
 #include "Input.h"
+#include "Menu.h"
 
 #include <algorithm>
 
@@ -9,6 +10,18 @@ namespace glacier::ui {
 bool HudEditor::update(const std::string& moduleName, const Rect& bounds,
                        float& outX, float& outY) {
     if (!m_active || bounds.w <= 0.0f || bounds.h <= 0.0f) return false;
+
+    // A widget positioned under the menu panel is invisible (the panel draws
+    // over it) but was still claiming clicks meant for the menu's own
+    // buttons underneath — a mouse-down on a toggle switch that happened to
+    // sit above a hidden HUD widget grabbed the widget instead of, or as
+    // well as, hitting the toggle. Declining outright rather than trying to
+    // arbitrate the two: a widget you can't see is not one you're trying to
+    // drag right now.
+    if (bounds.intersects(Menu::get().panelRect())) {
+        if (m_dragging == moduleName) m_dragging.clear();
+        return false;
+    }
 
     auto& r  = Renderer::get();
     auto& in = Input::get();

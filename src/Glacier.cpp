@@ -215,6 +215,20 @@ void Glacier::start(HMODULE self) {
         //
         // Do not add a second toggle in the WndProc: the two fire at different
         // times for one physical press and cancel each other out.
+        //
+        // Open and close are asymmetric on purpose:
+        //   - G opens AND closes.
+        //   - M only opens — it never closes, so it can't double as an
+        //     "accidentally close what I just opened" key.
+        //   - Escape only closes — it never opens, matching the universal
+        //     "Escape backs out of a menu" convention every player already
+        //     has muscle memory for.
+        // Opening additionally requires cursorGrabbed(): that's false during
+        // chat, the pause screen, and inventory, all of which the player can
+        // reach mid-typing a chat message containing a "g" or "m" — and
+        // GetAsyncKeyState reports the physical key regardless of which
+        // window has focus, so without this gate, typing "good game" in chat
+        // popped the menu open mid-sentence.
         {
             // The menu belongs to a play session. Outside one there is nothing
             // to configure against, and leaving it open across a disconnect
@@ -225,16 +239,32 @@ void Glacier::start(HMODULE self) {
                 setCursorReleased(false);
             }
 
-            const bool menuDown = (GetAsyncKeyState(m_menuKey)    & 0x8000) ||
-                                  (GetAsyncKeyState(m_menuKeyAlt) & 0x8000);
-            if (inGame && menuDown && !m_menuKeyWasDown.load(std::memory_order_relaxed)
-                       && !ui::Menu::get().capturingKey()) {
-                ui::Menu::get().toggle();
-                setCursorReleased(ui::Menu::get().open());
+            const bool gDown   = (GetAsyncKeyState(m_menuKey)     & 0x8000) != 0;
+            const bool mDown   = (GetAsyncKeyState(m_menuKeyAlt)  & 0x8000) != 0;
+            const bool escDown = (GetAsyncKeyState(VK_ESCAPE)     & 0x8000) != 0;
+
+            const bool gPressed   = gDown   && !m_menuKeyWasDown.load(std::memory_order_relaxed);
+            const bool mPressed   = mDown   && !m_menuKeyAltWasDown.load(std::memory_order_relaxed);
+            const bool escPressed = escDown && !m_menuCloseKeyWasDown.load(std::memory_order_relaxed);
+
+            if (inGame && !ui::Menu::get().capturingKey()) {
+                const bool open = ui::Menu::get().open();
+                const bool gameplayActive = sdk::GameSDK::get().cursorGrabbed();
+
+                if (!open && gameplayActive && (gPressed || mPressed)) {
+                    ui::Menu::get().setOpen(true);
+                    setCursorReleased(true);
+                } else if (open && (gPressed || escPressed)) {
+                    ui::Menu::get().setOpen(false);
+                    setCursorReleased(false);
+                }
             }
+
             // Tracked even when not in game, so walking back into a world with
-            // the key still held doesn't immediately open the menu.
-            m_menuKeyWasDown.store(menuDown, std::memory_order_relaxed);
+            // a key still held doesn't immediately act on it.
+            m_menuKeyWasDown.store(gDown, std::memory_order_relaxed);
+            m_menuKeyAltWasDown.store(mDown, std::memory_order_relaxed);
+            m_menuCloseKeyWasDown.store(escDown, std::memory_order_relaxed);
         }
 
         // F1: hides HUD modules, polled for the same RawInput reason as the

@@ -110,10 +110,17 @@ private:
     int               m_unloadKey   = VK_END;
     int               m_hudToggleKey = VK_F1;
     std::atomic<bool> m_shuttingDown   = false;
-    // Shared edge-detection flag for the menu toggle key. Written by both the
-    // WndProc hook (window thread) and the GetAsyncKeyState polling loop (logic
-    // thread) so the two paths can't both fire for the same physical key press.
-    std::atomic<bool> m_menuKeyWasDown = false;
+    // Edge-detection for the three keys that touch the menu's open/close state.
+    // Separate flags rather than one shared "menu key" flag: G opens AND
+    // closes, M only opens, and Escape only closes — collapsing them back into
+    // one edge would reintroduce the double-toggle bug documented on wndProc's
+    // isMenuKey check (one physical press, two state changes, because the poll
+    // and the window message arrive at different times). Written by both the
+    // WndProc hook (window thread, to swallow the key) and the GetAsyncKeyState
+    // polling loop (logic thread, which owns the actual toggle).
+    std::atomic<bool> m_menuKeyWasDown    = false;   // G
+    std::atomic<bool> m_menuKeyAltWasDown = false;   // M
+    std::atomic<bool> m_menuCloseKeyWasDown = false; // Escape
 
     // Only ever touched on the logic thread — the same poll loop that owns the
     // menu key edge above — so a plain bool is enough for the "was down" side.

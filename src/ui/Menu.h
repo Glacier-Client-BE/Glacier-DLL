@@ -26,6 +26,13 @@ public:
 
     bool open() const { return m_open; }
     void setOpen(bool open);
+
+    // The panel's last-drawn screen rect, so HudEditor can decline to drag a
+    // HUD widget positioned underneath it — otherwise a click meant for a
+    // menu button that happens to land on a hidden widget grabs that widget
+    // instead (or as well as) clicking the button. Stale after close, but
+    // harmless: HudEditor only ever consults this while the menu is active.
+    Rect panelRect() const { return m_panelRect; }
     void toggle() {
         static ULONGLONG lastToggle = 0;
         ULONGLONG now = GetTickCount64();
@@ -60,6 +67,7 @@ private:
     bool     m_open = false;
     Category m_category = Category::Visual;
     float    m_scroll = 0.0f;
+    Rect     m_panelRect{};
 
     // Which module's settings are expanded (by name — pointers would dangle if
     // the module list were ever rebuilt).
