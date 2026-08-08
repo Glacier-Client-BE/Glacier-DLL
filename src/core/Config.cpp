@@ -263,9 +263,10 @@ bool Config::save() {
                 << "unloadKey = "  << client.unloadKey()  << '\n'
                 << "# Hides HUD modules without opening the menu (like Latite/Flarial's F1).\n"
                 << "hudToggleKey = " << client.hudToggleKey() << '\n'
-                << "# Draw real item icons using the game's own renderer. Set false if\n"
-                << "# the game ever crashes on world load — this is the only path that\n"
-                << "# calls a game function located by matching a call site.\n"
+                << "# Draw real item icons using the game's own renderer. Off by default —\n"
+                << "# confirmed to crash the game on 1.26.40.5 while constructing the game's\n"
+                << "# render context; see the comment on ItemRendering::setEnabled. Only turn\n"
+                << "# this on to help re-verify a fix, not for normal play.\n"
                 << "itemIcons = "
                 << (sdk::ItemRendering::get().enabled() ? "true" : "false") << "\n\n";
         }

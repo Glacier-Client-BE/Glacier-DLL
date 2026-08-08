@@ -65,15 +65,25 @@ public:
         return instance;
     }
 
-    // On by default, overridable with `itemIcons = false` under [Glacier] in
+    // Off by default, overridable with `itemIcons = true` under [Glacier] in
     // config.ini.
     //
-    // It was briefly defaulted off while the world-load crash was unexplained.
-    // That crash turned out to have a separate, confirmed cause (Glacier was
-    // hooking its own debug console — see docs/HANDOFF.md), and the calls into
-    // game code here are wrapped in structured-exception guards that switch the
-    // feature off and name what failed. The config key stays as the one-line
-    // recovery if this path ever does turn out to be the unstable one.
+    // Confirmed unstable on 1.26.40.5: constructing BaseActorRenderContext
+    // faults identically across three independent test builds, including one
+    // with the padding buffer widened from 0x800 to 0x1000 (matching Flarial,
+    // Lyra, and every other reference client's own padding) — the crash's
+    // faulting address didn't move, which rules out a buffer-size cause and
+    // points at the `BaseActorRenderContext::BaseActorRenderContext` pattern
+    // itself resolving to the wrong address for this build. SEH around the
+    // call does not save it: a call through a wrong function pointer can
+    // execute arbitrary garbage before it faults, and if that garbage
+    // corrupts a stack cookie the CRT terminates the process via __fastfail
+    // before structured exception dispatch ever runs — which is consistent
+    // with disableAfterFault() never getting to log. Re-deriving the pattern
+    // needs a live disassembler session against a running 1.26.40.5, which is
+    // out of reach here; until then this stays off so a fresh install doesn't
+    // crash on world load. HUD widgets that want icons should fall back to
+    // JSON UI render controllers (see the pack's own ArmorHUD) instead.
     //
     // Must be called before installHooks() to have any effect.
     void setEnabled(bool enabled) { m_enabled = enabled; }
@@ -107,7 +117,7 @@ private:
     // what failed. Called from the render path, so it must not throw.
     void disableAfterFault(const char* what);
 
-    bool m_enabled = true;
+    bool m_enabled = false;
     bool m_available = false;
 
     // Two batches: one being filled by the overlay pass, one ready for the game
