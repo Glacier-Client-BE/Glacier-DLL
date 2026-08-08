@@ -26,6 +26,30 @@ was transcribed.
 | Decoding `getLocalPlayer`'s vtable index from a call-site signature | Flarial's `getLocalPlayerIndex` | `GameSDK::resolve` |
 | Fullbright driven by hooking `Options::getGamma` rather than poking the field | both | `GameSDK::setGammaOverride` |
 
+## 1b. Bundled assets
+
+### Font Awesome 6 Free (Solid)
+
+`assets/fonts/fa-solid-900.ttf`, embedded in the DLL as an `RCDATA` resource
+(`src/Glacier.rc`) and loaded into a private DirectWrite font collection at
+runtime. It is never installed on the machine and is not visible to any other
+process.
+
+- Upstream: <https://github.com/FortAwesome/Font-Awesome> (v6.5.2)
+- The **font files** are licensed **SIL OFL 1.1**; the full upstream license
+  text is kept alongside the font at `assets/fonts/LICENSE-fontawesome.txt`.
+- SIL OFL 1.1 governs the font as an independent work. It does not attach to
+  Glacier's own source, and it is compatible with distributing Glacier under
+  AGPLv3 — the two cover different things. The only obligations it imposes on
+  us are the ones met above: keep the license text with the font, and do not
+  sell the font on its own.
+- Why it is bundled at all rather than using a system font: Windows 10 ships
+  *Segoe MDL2 Assets* and Windows 11 ships *Segoe Fluent Icons*, under
+  different family names and with different glyph coverage. Glacier is tested
+  on both. Embedding one known font removes the entire question. Every icon
+  still checks `Renderer::hasGlyph` before drawing and falls back to a drawn
+  mark, so a missing glyph can never render as a tofu box.
+
 ## 2. Signature and offset data — imported, and the reason for the license
 
 `src/memory/Signatures.cpp` is different. The AOB byte patterns and struct

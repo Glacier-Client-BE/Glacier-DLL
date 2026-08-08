@@ -63,127 +63,124 @@ modules without opening the menu. Config at `%APPDATA%\Glacier\config.ini`.
 Newest first. **Nothing in items 1–3 has been tested in-game yet** — all
 three landed after the most recent logs were captured.
 
-### 1. Unload race — DIAGNOSED THIS SESSION, NOT YET FIXED
+### 1. Menu input handoff — REWRITTEN, needs a test
 
-**This is the highest-value item in the file: a confirmed root cause with a
-clear fix, just not written yet.** Read the evidence before touching it.
+**Symptom the rewrite is answering** (user, in their own words): "when I open
+the mod menu and use my mouse and move it around, instead of showing me a
+cursor to interact with the mod menu it moves my player's head and doesn't let
+me interact with the menu."
 
-**Symptom, from the Win11 friend's log:**
+Two causes, both invisible from the code, both now fixed:
 
-```
-13:41:34.635 [info] D3D hook confirmed live on the game's swapchain
-   … ~2 minutes of normal operation …
-13:43:23.536 [warn] live swapchain vtable 0x7fface950168 differs from the probed vtable 0x0
-13:43:23.536 [error] *** access violation at 0x0 (no module) — Glacier was: (idle)
-13:43:23.536 [error]     writing address 0x0 (near-null: a missing null check)
-13:43:23.582 [info] all hooks removed
-13:43:23.582 [info] Glacier detached
-```
+1. **Bedrock reads mouse look through Raw Input, and `WH_MOUSE_LL` does not
+   intercept Raw Input.** Low-level hooks sit on the message path;
+   `RIM_TYPEMOUSE` deltas are delivered separately and never pass through
+   them. Swallowing `WM_MOUSEMOVE` therefore froze the OS *pointer* while the
+   *camera* carried on reading the real motion — which is also exactly why the
+   menu's cursor never moved and nothing could be clicked. Note the
+   asymmetry that was staring at us the whole time: the keyboard half of the
+   same hook *did* work (the user confirmed movement was blocked). A
+   Raw-Input mouse plus a message-queue keyboard is precisely what that looks
+   like.
 
-**Why this is provably the unload race, not a guess.** The vtable check in
-`hkPresent` is `s_vtableChecked.exchange(true)` — it can only run **once**
-per value of that flag. It logged "confirmed live" at attach. It then logged
-the *mismatch branch* two minutes later. Both branches running means the
-flag went back to false in between, and the only code that does that is
-`D3DHook::shutdown()` (`D3DHook.cpp:193`). So: the user pressed END,
-`shutdown()` ran and nulled `s_originalPresent`/`s_hookedVTable`, while the
-game's render thread was **already inside `hkPresent`**. That in-flight
-detour then re-ran the vtable check (against the now-null `s_hookedVTable`,
-hence "differs from the probed vtable 0x0") and fell through to
-`return s_originalPresent(sc, sync, flags)` — a call through a null pointer.
-Hence "access violation at 0x0 (no module)".
+2. **Cursor state is per-thread.** `SetCapture`, `ReleaseCapture`,
+   `ShowCursor` and `SetCursor` all act on the *calling thread's* input
+   state. Every one of them was being called from the Present hook (the
+   game's render thread) and from Glacier's logic thread, where they are
+   silent no-ops for the game's window. That is how a log could report the
+   cursor `released (ok)` with nothing whatsoever having changed on screen —
+   and it means the previous session's conclusion ("the game's own
+   `releaseCursor()` isn't enough, so port Flarial's ClipCursor/SetCapture
+   pair") fixed the wrong half: the ported code was correct and was running
+   on a thread where it could not do anything.
 
-**The fix is a teardown-ordering problem, not a null check.** Adding `if
-(!s_originalPresent) return S_OK;` would paper over it and *still* be wrong:
-returning without calling the real Present drops a frame, and the deeper
-issue is that `HookManager::shutdown()` calls `MH_RemoveHook` while game
-threads can be executing inside our detours. Look at how the reference
-clients sequence unload — MinHook's `MH_DisableHook` already suspends
-threads and rewrites instruction pointers, so the ordering fix is to let
-MinHook fully disable/remove **before** any trampoline pointer is nulled,
-and ideally to not null them at all (a removed hook means the detour can no
-longer be entered). Right now `Glacier::start()`'s teardown calls
-`D3DHook::shutdown()` (nulls the pointers) *before*
-`HookManager::shutdown()` (removes the hooks) — that ordering is backwards
-and is the bug. Check `Renderer::shutdown()` and `ModuleManager::shutdown()`
-for the same shape while you're there.
+**What replaced it** (all in `src/ui/InputGuard.{h,cpp}`):
 
-### 2. Rendering on D3D12 — fix shipped, needs a real test
+- `GetRawInputData` and `GetRawInputBuffer` are hooked. While the menu is
+  open, every `RIM_TYPEMOUSE` record they return has its deltas and button
+  flags zeroed. The game still gets its events and keeps its own state
+  consistent — they just say the mouse did not move. This is the API-level
+  equivalent of Flarial hooking `MouseDevice::feed` / `InputHandler::tick`
+  (`reference/flarial/.../Input/MouseHook.cpp`), with no game signature to
+  break on the next Bedrock update.
+- `ClipCursor`, `SetCursorPos`, `SetCapture`, `ShowCursor` and `SetCursor`
+  are hooked so the game cannot re-hide or re-clip the pointer on the next
+  frame (Flarial hooks `ClipCursor` for the same reason —
+  `ClipCursorHook.hpp`). Whatever rect the game asked for while suppressed is
+  remembered and handed back on close.
+- **All cursor work is marshalled onto the window thread** via a registered
+  private message (`RegisterWindowMessageW(L"GlacierCursorSync")`) handled in
+  `Glacier::wndProc`. That WndProc is the only place Glacier runs on the
+  window's own thread, which is why the handoff lives there now.
+- The `WH_MOUSE_LL` hook is gone. `WH_KEYBOARD_LL` stays — it is confirmed
+  working for W/A/S/D/Space/Shift/Ctrl.
+- `Input::pollMouse` is back on `GetCursorPos` (+ `ScreenToClient`, scaled
+  from client pixels to back-buffer pixels), which is finally trustworthy
+  because the pointer is genuinely free by then. The virtual-cursor
+  accumulator is deleted.
+- `Glacier::setCursorReleased` is gone; `ui::InputGuard::setMenuOpen` is the
+  single switch, and `Glacier::closeMenu()` is the single close path so the
+  menu's own close button cannot drift from the G/Escape path.
 
-Bedrock renders through **either D3D11 or D3D12** depending on build and
-machine. The user's own machine is D3D11 and has always rendered fine; both
-friends saw *nothing* render, and their logs eventually explained why.
+**To verify:** open the menu → the arrow cursor is visible and moves freely,
+the camera does not turn, the player does not move, cards and toggles
+respond to clicks. Close → the game takes the mouse back immediately and
+look works normally. In the log, `input hooks installed (pointer + raw mouse
+are handed to the menu on open)` means all seven installed; anything less
+names which one failed and that maps directly to the symptom (camera still
+turns = the Raw Input pair; pointer still invisible = ShowCursor/SetCursor;
+pointer snaps to centre = SetCursorPos/ClipCursor).
 
-Two bugs, in sequence:
+### 2. Rendering on D3D12 — the fix has still never actually run
 
-- **First:** `D3DHook::hkPresent` gated the entire overlay callback on
-  `sc->GetDevice(ID3D11Device)` succeeding. That call correctly returns
-  `E_NOINTERFACE` on a D3D12-backed swap chain — not an error, just DXGI
-  telling the truth — so the whole overlay was silently skipped with nothing
-  logged. Nothing downstream even used the device it produced
-  (`Renderer::beginFrame` binds straight to the swap chain). Fixed: called
-  unconditionally now, device/context are best-effort extras.
-- **Then:** with that gate gone, the friend's log showed
-  `could not get the back buffer as a DXGI surface (D3D11) or bridge it via
-  D3D11On12 (D3D12): 0x80004002` every frame, plus `game is rendering
-  through D3D12 but no command queue has been captured yet`. The D3D11On12
-  bridge needs a live `ID3D12CommandQueue*`, and the
-  `IDXGIFactory2::CreateSwapChainForHwnd` hook meant to capture it **never
-  fired** — the game creates its swap chain long before an injected DLL
-  attaches, so that hook is structurally too late. (Latite gets away with it
-  because of how it loads; we can't.) Fixed by hooking
-  `ID3D12CommandQueue::ExecuteCommandLists` instead, via the same
-  probe-object vtable trick already used for `Present`/`ResizeBuffers` — the
-  game's real queue calls it constantly, so it captures within a frame.
-  `CreateSwapChainForHwnd` stays installed as a secondary path.
+Unchanged in substance from the previous session, but the newest D3D12 log
+proved something worth writing down: **the friend was testing a build that
+predated the fix.** Their log's `build Aug 8 2026 12:27:20` (compiler time,
+UTC) is commit `3836698` — the D3D11On12 bridge — not `0d115e8`, which added
+the `ExecuteCommandLists` capture. So their log shows the bridge failing for
+exactly the reason `0d115e8` was written to fix, and tells us nothing about
+whether it worked. **Always check `build <date> <time>` against `git log`
+before reading a log as evidence.**
 
-**To verify (needs the D3D12 friend, not the user):** watch for `captured
-the game's D3D12 command queue via ExecuteCommandLists`, then `bridged the
-overlay onto the game's D3D12 swap chain via D3D11On12`, then `first
-successful beginFrame`. If the capture line appears but the bridge line
-doesn't, `D3D11On12CreateDevice` is failing and its `hr` is logged. If
-neither appears, the probe queue never got created — that's logged too.
+That log did surface two real problems, both now fixed:
 
-### 3. Cursor and input handoff — rewritten twice this session, needs a test
+- The command-queue probe lived inside the `CreateDXGIFactory1` block and
+  enumerated an adapter off that factory, with *all three* of "no factory",
+  "no adapter" and "no D3D12 device" silent. A D3D12 machine where the
+  overlay never appeared produced a log with simply nothing between the DXGI
+  hooks and `WndProc hooked`. It is now `D3DHook::installCommandQueueHook()`,
+  uses the default adapter (no factory dependency), and logs every failure.
+- `could not get the back buffer as a DXGI surface...` was a `LOG_ERROR` in
+  `createTarget`, which runs every frame that has no target — hundreds of
+  copies, burying the one warning above it that named the cause. Now
+  `warnOnce`.
 
-The through-line of this session: **the game's own
-`grabCursor()`/`releaseCursor()` are not sufficient for any of this**, even
-when they demonstrably work. The user's log shows `releaseCursor called —
-cursorGrabbed() now reports released (ok)` and the matching `grabbed (ok)`,
-and *still* the player could move, look, and never got the cursor back
-cleanly. Three separate mechanisms now cover what that one call was wrongly
-assumed to handle:
+**To verify (needs the D3D12 friend, on a CURRENT build):** `captured the
+game's D3D12 command queue via ExecuteCommandLists` → `bridged the overlay
+onto the game's D3D12 swap chain via D3D11On12` → `first successful
+beginFrame`. If instead you see `no probe D3D12 device` or `could not create
+a probe D3D12 command queue`, that line is the whole answer.
 
-- **Movement/attack** — `ui::InputGuard` (`src/ui/InputGuard.h/.cpp`), a
-  `WH_KEYBOARD_LL` + `WH_MOUSE_LL` pair on a dedicated pump thread, gated on
-  `ui::Menu::open()`. Blocks W/A/S/D/Space/Shift/Ctrl and left/right/middle
-  click. Same technique `NullMovement` already used, just menu-gated. **The
-  user has confirmed this part works** ("its good that i cant move").
-- **Camera look** — the same `WH_MOUSE_LL` hook now also swallows
-  `WM_MOUSEMOVE` while the menu is open. Because that freezes the real OS
-  cursor too, `InputGuard` accumulates its own **virtual cursor** from the
-  raw deltas before dropping them, and `ui::Input::pollMouse` reads that
-  instead of `GetCursorPos` while the menu is open. Buttons still come from
-  `GetAsyncKeyState` (physical state, unaffected by the block).
-- **Cursor grab/release** — `Glacier::setCursorReleased` is now a direct
-  port of Flarial's `CursorHandler::grabCursor`/`releaseCursor`
-  (`reference/flarial/src/Client/Hook/Hooks/Input/CursorHandler.hpp`): on
-  close, `ClipCursor` to a zero-size rect at the window centre + `SetCapture`
-  + `ShowCursor(FALSE)`; on open, undo all three. Pure OS APIs, no signature.
-  Made **edge-triggered** — the Present hook calls it every frame regardless
-  of menu state, and re-clipping every frame while the menu is *closed*
-  would fight the game's own cursor handling for the whole session rather
-  than just at the moment of close.
+### 3. Unload race — FIXED, needs a test
 
-The custom-drawn menu reticle (`Menu::drawCursor`) was **removed** at the
-user's request, on the assumption the real OS cursor is now reliably
-visible. If the cursor turns out to still be invisible over the menu, that
-assumption is the thing to re-check first — not to re-add the reticle
-blindly.
+Root cause was diagnosed last session and is written up in the git history of
+`Glacier.cpp`: `Glacier::start()`'s teardown called `D3DHook::shutdown()`
+(which nulls `s_originalPresent`) *before* `HookManager::shutdown()` (which
+removes the hooks), so an in-flight `hkPresent` on the game's render thread
+fell through to calling a null pointer — `access violation at 0x0`, with a
+`live swapchain vtable ... differs from the probed vtable 0x0` warning
+immediately before it.
 
-**To verify:** open the menu → cursor visible and freely movable, camera
-does not turn, player does not move, menu is clickable. Close → game takes
-the mouse back immediately, look works normally again.
+Teardown is now ordered: close the menu and hand the pointer back (which
+requires the WndProc to still be installed, so `InputGuard::stop()` runs
+before `removeWndProc()`), save the config, then `HookManager::shutdown()` —
+whose `MH_DisableHook` suspends every other thread and rewrites any
+instruction pointer sitting inside a detour — and only then `D3DHook`,
+`Renderer` and `ModuleManager`.
+
+**To verify:** press END during normal play, repeatedly, ideally while
+moving. `all hooks removed` → `Glacier detached` with no access violation in
+between, and the game keeps running.
 
 ### 4. An access violation inside Glacier.dll itself, cause unknown
 
@@ -242,12 +239,15 @@ item icon batch drawn (15 icons)`), a clean `ResizeBuffers` → rebind cycle,
 list/toggles/sliders (config saves reflected real interaction).
 **Coordinates** and **Day Counter** confirmed in earlier sessions.
 
-**Confirmed by the user this session:** `InputGuard` blocking movement while
-the menu is open.
+**Confirmed by the user in an earlier session:** `WH_KEYBOARD_LL` blocking
+movement while the menu is open. That one confirmation is also what
+eventually identified the Raw Input problem — keyboard blocking working while
+mouse blocking did not is only possible if the two travel different paths.
 
-**Not verified by anyone:** everything in open items 1–3 above, the D3D12
-path end-to-end, the menu background blur, hit confirmation, Inventory HUD's
-icon grid, and every Phase 8 module (Speedometer, Walk Distance, Low
+**Not verified by anyone:** everything in open items 1–3 above, the entire
+redesigned menu (card grid, search, chips, Performance tab, embedded icon
+font), the D3D12 path end-to-end, the menu background blur, hit
+confirmation, Inventory HUD's icon grid, and every Phase 8 module (Speedometer, Walk Distance, Low
 Durability Warning, Combo Counter, Hotbar HUD, Frame Time Display,
 Stopwatch, DVD Screen, Custom Crosshair). None have a known problem — they
 are simply unobserved.
@@ -270,18 +270,24 @@ These each cost a debugging cycle already. Don't re-derive them.
    Latite hooks the former because of how it loads; copying that verbatim
    into an injected DLL silently gets you nothing.
 
-3. **Bedrock reads keyboard/mouse through RawInput.** `WM_KEYDOWN` and mouse
-   messages are *not* reliably delivered to our WndProc. Everything
-   input-related polls `GetAsyncKeyState`/`GetCursorPos` on the logic thread
-   or the Present callback instead — the menu key, the mouse for the menu,
-   Stopwatch's keybinds, all of it.
+3. **Bedrock reads mouse look through Raw Input, and a `WH_MOUSE_LL` hook
+   cannot intercept Raw Input.** Low-level hooks sit on the message path;
+   `RIM_TYPEMOUSE` deltas are delivered separately. To stop the camera you
+   must neutralise the records `GetRawInputData`/`GetRawInputBuffer` hand
+   back (or hook the game's own `MouseDevice::feed`, as Flarial does). The
+   keyboard is a different story — `WH_KEYBOARD_LL` genuinely does block
+   W/A/S/D — and that asymmetry is the tell. Our own hotkeys still poll
+   `GetAsyncKeyState` rather than trusting `WM_KEYDOWN`.
 
-4. **The game's `cursorGrabbed()` flag is not the mechanism for anything
-   you want.** It does not gate movement, does not gate attack, and does not
-   by itself free or capture the OS cursor — a log with `released (ok)` and
-   a player still walking around proved all three. Movement/attack/look are
-   blocked at the OS input layer (`ui::InputGuard`); the cursor is handed
-   over with `ClipCursor`/`SetCapture`/`ShowCursor` (Flarial's approach).
+4. **Cursor state is per-thread, and so `ClipCursor`/`SetCapture`/
+   `ShowCursor`/`SetCursor` only work from the window's own thread.** Called
+   from the render thread or Glacier's logic thread they are silent no-ops
+   for the game's window — they return success and change nothing. This cost
+   two full sessions: the Flarial grab/release port was *correct* and simply
+   ran on the wrong thread. Anything touching the pointer must be marshalled
+   to `Glacier::wndProc` (see `InputGuard::syncMessage`). Separately, the
+   game's own `cursorGrabbed()` flag gates none of movement, attack or look
+   — it is read for other purposes, not used as a lever.
 
 5. **Never compute the same edge in two places.** `GetAsyncKeyState` sees a
    key before `WM_KEYDOWN` arrives, so a poll and a WndProc handler racing on
@@ -315,10 +321,13 @@ These each cost a debugging cycle already. Don't re-derive them.
    against the game's main thread). A hang with no exception in the log is
    almost always this, not a bad pointer.
 
-10. **Teardown runs while the game's threads are inside our detours.** See
-    open item #1 — nulling a trampoline pointer that an in-flight detour is
-    about to call through is a crash at address `0x0`. Order teardown so
-    hooks are fully removed before anything they reference is destroyed.
+10. **Teardown runs while the game's threads are inside our detours.**
+    Nulling a trampoline pointer that an in-flight detour is about to call
+    through is a crash at address `0x0`. `HookManager::shutdown()` must come
+    before anything a detour can reach, because its `MH_DisableHook`
+    suspends every other thread and rewrites instruction pointers sitting
+    inside detours — that is the guarantee the rest of the sequence rests
+    on. Fixed; see open item #3.
 
 11. **Menu open/close is asymmetric on purpose.** `G` opens and closes, `M`
     only opens, `Escape` only closes — not three redundant ways to do the
@@ -367,7 +376,7 @@ interaction & pause, item rendering).
 |---|---|
 | **8** | **Module catalog expansion.** Full scope is the whole Latite (~40 modules, `reference/latite`) and Flarial (~130 modules, `reference/flarial`) catalogs, minus three exclusions: `Doom` (an embedded game engine, not a Minecraft client feature), `SkinStealer` (copies another player's skin without consent), and server-specific utilities tied to one community (`HiveUtils`, `HiveStat`, `HiveModeCatcher`, `HiveTranslate`, `ZeqaUtils`). Ported in batches, smallest-new-SDK-plumbing first. **Shipped:** Speedometer, Walk Distance (from `playerPosition()` deltas — no velocity accessor exists); Low Durability Warning (`armor()`'s `durabilityFraction()`); Combo Counter (via `sdk::HitConfirmation`, off by default); Hotbar HUD, Inventory HUD (`GameSDK::hotbar()`/`inventory()`, mirroring `armor()`'s pattern over `PlayerInventory` instead of the ECS); Frame Time Display, Stopwatch, DVD Screen, Custom Crosshair (zero new signatures). **Next batch is unplanned** — scan `ModuleManager.cpp`/`Manager.cpp` in the reference trees for what's left, sort by "needs a new SDK accessor" vs. "needs a new hook/signature" vs. "already covered". |
 | **9** | **HUD widget visual pass — done for the current catalog.** Shared design tokens (`HudModule.h`) and a `TextHudModule` base. Background defaults **off** everywhere, matching Latite's `HUDModule`. Armor HUD and Hotbar HUD are chrome-less, keyed off Latite's `ArmorHUD.cpp`. **Re-open whenever Phase 8 adds a widget.** |
-| **10** | **Theming & polish** — menu animation, per-module colour presets, keybind-conflict UX. Background blur landed this session (`Renderer::blurBackdrop`, Gaussian blur via a captured D2D bitmap, drawn behind the whole overlay before the dim fill) but is **untested**. |
+| **10** | **Theming & polish.** Largely landed: the menu is now a card grid with a search box, category chips, an enabled count, a Modules/Performance tab strip, per-module Font Awesome icons, and settings as a detail page. `Renderer` gained `drawGlyph`/`hasGlyph` (private DirectWrite collection over an embedded font resource), `fillEllipse` and `drawLine`. Background blur (`Renderer::blurBackdrop`) is in but **untested**. **Remaining:** open/close animation, per-module colour presets, keybind-conflict UX. |
 | **11** | **Packaging** — version-string exports for a launcher, tag-triggered release zip (`build.yml` already has the release job). |
 
 Scope boundary (enforced since Phase 0): **visual / HUD / QoL only**. No
