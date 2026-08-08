@@ -25,6 +25,7 @@ public:
         : HudModule("Inventory HUD", "Shows your full inventory",
                     Category::Player, 0,
                     0.30f, 0.55f, 0xFFFFFFFF) {
+        setIcon(0xF468);   // fa-boxes-stacked
         addSetting(Setting{ "slot", "Slot size", 22.0f, 14.0f, 40.0f, 1.0f });
         addSetting(Setting{ "gap", "Spacing", 2.0f, 0.0f, 10.0f, 1.0f });
         addSetting(Setting{ "counts", "Stack counts", true });

@@ -15,6 +15,7 @@ public:
         : TextHudModule("Clock", "Shows the real time and session length",
                     Category::Misc, 0,
                     0.01f, 0.29f, 0xFFFFFFFF) {
+        setIcon(0xF017);   // fa-clock
         addSetting(Setting{ "seconds", "Show seconds", false });
         addSetting(Setting{ "24h", "24-hour clock", true });
         addSetting(Setting{ "session", "Show session length", true });

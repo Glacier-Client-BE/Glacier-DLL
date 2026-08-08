@@ -18,6 +18,7 @@ public:
         : TextHudModule("Ping", "Shows your connection latency",
                     Category::Misc, 0,
                     0.01f, 0.17f, 0xFFFFFFFF) {
+        setIcon(0xF012);   // fa-signal
         addSetting(Setting{ "label", "Show \"ms\" unit", true });
         addSetting(Setting{ "colorcode", "Color by latency", true });
     }

@@ -22,6 +22,7 @@ public:
         : TextHudModule("CPS Counter", "Shows clicks per second",
                     Category::Combat, 0,
                     0.01f, 0.09f, 0xFFFFFFFF) {
+        setIcon(0xF245);   // fa-mouse-pointer
         addSetting(Setting{ "right", "Show right clicks", true });
     }
 

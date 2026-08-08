@@ -14,6 +14,7 @@ public:
         : TextHudModule("Watermark", "Draws the Glacier logo on screen",
                     Category::Visual, 0,
                     0.01f, 0.01f, 0xFF4C9AFF) {
+        setIcon(0xF031);   // fa-font
         addSetting(Setting{ "showfps", "Show FPS", true });
     }
 

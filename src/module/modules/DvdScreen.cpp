@@ -21,6 +21,7 @@ class DvdScreen final : public Module {
 public:
     DvdScreen()
         : Module("DVD Screen", "The bouncing screensaver logo", Category::Visual, 0) {
+        setIcon(0xF390);   // fa-display
         addSetting(Setting{ "width", "Width", 140.0f, 60.0f, 400.0f, 5.0f });
         addSetting(Setting{ "height", "Height", 70.0f, 30.0f, 200.0f, 5.0f });
         addSetting(Setting{ "speed", "Speed (px/s)", 220.0f, 40.0f, 800.0f, 10.0f });

@@ -71,9 +71,13 @@ void Glacier::start(HMODULE self) {
 
     sdk::GameSDK::get().installHooks();
 
-    // Movement/attack blocking while the menu is open — see ui/InputGuard.h.
-    // OS-level, not a game hook, so it starts independently of SDK resolution.
+    // Input handoff for the menu — see ui/InputGuard.h. Two halves: a
+    // low-level keyboard hook on its own pump thread, and a set of Win32
+    // pointer/Raw-Input hooks that go through the HookManager (hence: after
+    // its initialize(), and removed by its shutdown()). Neither depends on a
+    // game signature, so both come up even if the SDK is partly unresolved.
     ui::InputGuard::get().start();
+    ui::InputGuard::get().installApiHooks();
 
     // Restore saved settings. Deliberately after installHooks(): loading can
     // re-enable a module, whose onEnable() may depend on a hook being live, and
@@ -124,16 +128,15 @@ void Glacier::start(HMODULE self) {
         // hold and the player keeps moving behind the menu.
         sdk::GameSDK::get().applyCursorState(ui::Menu::get().open());
 
-        // Also re-evaluated every frame (edge-triggered internally — see
-        // setCursorReleased) rather than only on the toggle, for the same
-        // reason as applyCursorState above: consistency matters more than
-        // avoiding a redundant call.
-        setCursorReleased(ui::Menu::get().open());
-
-        // Movement/attack are a separate path from cursor grab entirely (see
-        // ui/InputGuard.h) — driven every frame for the same reason as
-        // setCursorReleased above.
-        ui::InputGuard::get().setActive(ui::Menu::get().open());
+        // The OS-level half of the same reconciliation, and the one that
+        // actually decides whether the player can look around behind the
+        // menu — see ui/InputGuard.h for why the game's own cursor grab is
+        // not sufficient for any of it. setMenuOpen is edge-triggered
+        // internally; reassert re-posts the pointer state a couple of times a
+        // second so anything that steals it back (an alt-tab, a screen the
+        // game pushes on its own) is corrected without closing the menu.
+        ui::InputGuard::get().setMenuOpen(ui::Menu::get().open());
+        ui::InputGuard::get().reassert();
 
         // Sample the mouse before anything hit-tests it. Polled rather than
         // taken from WM_* messages because Bedrock consumes the mouse through
@@ -252,8 +255,7 @@ void Glacier::start(HMODULE self) {
             const bool inGame = sdk::GameSDK::get().inGame();
             if (!inGame && ui::Menu::get().open()) {
                 ui::Menu::get().setOpen(false);
-                setCursorReleased(false);
-                ui::InputGuard::get().setActive(false);
+                ui::InputGuard::get().setMenuOpen(false);
             }
 
             const bool gDown   = (GetAsyncKeyState(m_menuKey)     & 0x8000) != 0;
@@ -268,14 +270,18 @@ void Glacier::start(HMODULE self) {
                 const bool open = ui::Menu::get().open();
                 const bool gameplayActive = sdk::GameSDK::get().cursorGrabbed();
 
-                if (!open && gameplayActive && (gPressed || mPressed)) {
+                // G and M are ordinary letters as far as the search box is
+                // concerned. While it has focus they type; Escape still
+                // closes, which is also how you get out of the search box.
+                const bool letters = !ui::Menu::get().capturingText();
+                const bool gPressedMenu = gPressed && letters;
+                const bool mPressedMenu = mPressed && letters;
+
+                if (!open && gameplayActive && (gPressedMenu || mPressedMenu)) {
                     ui::Menu::get().setOpen(true);
-                    setCursorReleased(true);
-                    ui::InputGuard::get().setActive(true);
-                } else if (open && (gPressed || escPressed)) {
-                    ui::Menu::get().setOpen(false);
-                    setCursorReleased(false);
-                    ui::InputGuard::get().setActive(false);
+                    ui::InputGuard::get().setMenuOpen(true);
+                } else if (open && (gPressedMenu || escPressed)) {
+                    closeMenu();
                 }
             }
 
@@ -353,21 +359,36 @@ void Glacier::start(HMODULE self) {
         }
     }
 
-    // Teardown, strict reverse order: stop receiving input, close the menu (so
-    // the cursor is handed back), stop receiving frames, remove every hook, then
-    // destroy the renderer and the modules those hooks could have called into.
-    removeWndProc();
-    restoreWindowTitle();
+    // Teardown. The ordering here is load-bearing, not cosmetic.
+    //
+    // The menu closes and the pointer goes back to the game FIRST, and
+    // InputGuard::stop() runs before removeWndProc() — it hands the cursor
+    // back by sending its sync message to the window, which only works while
+    // our WndProc is still installed to receive it.
     ui::Menu::get().setOpen(false);
     ui::InputGuard::get().stop();
+    removeWndProc();
+    restoreWindowTitle();
 
     // Final save before anything is torn down, so state changed since the last
     // menu close isn't lost on unload.
     Config::get().save();
 
-    setCursorReleased(false);
-    D3DHook::get().shutdown();
+    // Then: every hook comes out BEFORE anything a detour could reach is
+    // destroyed. This order was previously reversed, and that was a real
+    // crash, not a theoretical one — D3DHook::shutdown() nulled
+    // s_originalPresent while the game's render thread was already inside
+    // hkPresent, and the in-flight detour fell through to calling it. The
+    // logged symptom was an access violation at 0x0 with a "live swapchain
+    // vtable ... differs from the probed vtable 0x0" warning immediately
+    // before it (docs/HANDOFF.md § "Unload race").
+    //
+    // MH_DisableHook — which HookManager::shutdown() runs first — suspends
+    // every other thread and rewrites any instruction pointer sitting inside
+    // a detour, so once it returns no thread can still be executing one. That
+    // is the guarantee the rest of this sequence depends on.
     HookManager::get().shutdown();
+    D3DHook::get().shutdown();
     ui::Renderer::get().shutdown();
     ModuleManager::get().shutdown();
     EventBus::get().clear();
@@ -384,6 +405,11 @@ void Glacier::start(HMODULE self) {
 
 void Glacier::requestShutdown() {
     m_shuttingDown.store(true);
+}
+
+void Glacier::closeMenu() {
+    ui::Menu::get().setOpen(false);
+    ui::InputGuard::get().setMenuOpen(false);
 }
 
 void Glacier::installWndProc(HWND hwnd) {
@@ -447,60 +473,6 @@ void Glacier::removeWndProc() {
     }
 }
 
-void Glacier::setCursorReleased(bool released) {
-    // Ported from Flarial's CursorHandler::grabCursor/releaseCursor (see
-    // reference/flarial/src/Client/Hook/Hooks/Input/CursorHandler.hpp) —
-    // pure OS APIs, no game signature needed. Earlier versions of this
-    // function trusted the game's own releaseCursor()/grabCursor() (via
-    // GameSDK::applyCursorState, still called separately every frame from
-    // the Present hook, for cursorGrabbed()'s sake elsewhere) to actually
-    // free/recapture the OS cursor. Confirmed working ("released (ok)" /
-    // "grabbed (ok)") in a real log and STILL didn't reliably free the
-    // cursor for the menu, nor reliably hand it back to the game on close —
-    // whatever the game's own function does internally isn't the whole
-    // story. This is the concrete mechanism both reference clients actually
-    // rely on: on close, clip the cursor to a zero-size rect at the
-    // window's center and SetCapture the window, so the game keeps
-    // receiving raw movement as input while the pointer itself can't
-    // visibly move; on open, undo both.
-    //
-    // Called every frame the menu is open OR closed (see the Present hook),
-    // not just on the toggle edge — hence the edge-trigger here. ShowCursor
-    // is a running counter shared with anything else in the process that
-    // touches it; calling its loop every single frame instead of once per
-    // edge would be harmless on its own (the loop is self-limiting) but
-    // ClipCursor/SetCapture every frame during ordinary gameplay would mean
-    // fighting the game's own cursor handling for the entire time the menu
-    // is closed, not just at the moment it closes — precisely the kind of
-    // interference that could explain "the game doesn't steal the cursor
-    // back properly."
-    static bool s_released = false;
-    if (released == s_released) return;
-    s_released = released;
-
-    if (released) {
-        ClipCursor(nullptr);
-        ReleaseCapture();
-        while (ShowCursor(TRUE) < 0) {}
-        return;
-    }
-
-    HWND hwnd = Glacier::get().m_window;
-    if (!hwnd) return;
-
-    RECT rect{};
-    GetClientRect(hwnd, &rect);
-    rect.top  = (rect.bottom + rect.top) / 2;
-    rect.left = (rect.right + rect.left) / 2;
-    ClientToScreen(hwnd, reinterpret_cast<LPPOINT>(&rect));
-    rect.bottom = rect.top;
-    rect.right  = rect.left;
-
-    ClipCursor(&rect);
-    SetCapture(hwnd);
-    while (ShowCursor(FALSE) >= 0) {}
-}
-
 bool Glacier::isGameInputMessage(UINT msg) {
     switch (msg) {
         case WM_MOUSEMOVE:
@@ -522,6 +494,17 @@ LRESULT CALLBACK Glacier::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     auto& self = Glacier::get();
     auto& menu = ui::Menu::get();
     auto& in   = ui::Input::get();
+    auto& guard = ui::InputGuard::get();
+
+    // This is the ONLY place Glacier runs on the window's own thread, which is
+    // the only thread whose SetCapture/ShowCursor/SetCursor calls mean anything
+    // for this window — so it is where the cursor handoff is performed. Every
+    // other thread that wants to change it posts this message. See
+    // ui/InputGuard.h.
+    if (msg != 0 && msg == guard.syncMessage()) {
+        guard.onSyncMessage(wParam);
+        return 0;
+    }
 
     // Bit 30 of lParam is the "was already down" flag — ignoring it means a held
     // key would toggle the module every repeat.
@@ -567,18 +550,30 @@ LRESULT CALLBACK Glacier::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             case WM_MOUSEWHEEL:
                 in.onScroll(static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA);
                 break;
+            case WM_CHAR:
+                // Feeds the menu's search box. Printable characters only —
+                // backspace arrives here as \b and is handled as an edit, and
+                // everything else (Escape, Tab, Return) is left to the key
+                // handling above. This is also the message that reliably says
+                // "the user typed a letter", which WM_KEYDOWN alone does not:
+                // it is the one that has been through the keyboard layout.
+                in.onChar(static_cast<wchar_t>(wParam));
+                break;
             case WM_SETCURSOR:
+                // Returning TRUE claims the cursor for this window, which is
+                // what keeps the arrow drawn over the menu instead of the game
+                // resetting it to nothing on every mouse move.
                 SetCursor(LoadCursorW(nullptr, IDC_ARROW));
                 return TRUE;
             default:
                 break;
         }
 
-        // Supplementary only. What actually pauses the game behind the menu is
-        // releasing the game's cursor grab (setCursorReleased) — Bedrock reads
-        // RawInput, so a swallowed WM_KEYDOWN stops nothing on its own. This
-        // remains because it costs nothing and does help for the messages the
-        // game does read from the queue.
+        // Supplementary only. What actually stops the player moving and
+        // looking behind the menu is ui::InputGuard — Bedrock reads the mouse
+        // through RawInput, so a swallowed WM_MOUSEMOVE or WM_INPUT stops
+        // nothing on its own. This remains because it costs nothing and does
+        // help for whatever the game does read from the message queue.
         if (isGameInputMessage(msg)) {
             return 0;
         }

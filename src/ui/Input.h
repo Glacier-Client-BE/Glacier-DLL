@@ -1,9 +1,9 @@
 #pragma once
 
-#include "InputGuard.h"
 #include "Renderer.h"
 
 #include <algorithm>
+#include <string>
 #include <Windows.h>
 
 // Input state for the menu and the HUD editor.
@@ -17,13 +17,14 @@
 // through RawInput, so WM_MOUSEMOVE / WM_LBUTTONDOWN are not reliably delivered
 // to our WndProc — the menu used to see the cursor parked at (0,0) with no
 // clicks at all, which is why nothing in it responded. pollMouse() is called
-// once per frame from the Present hook while the menu is open. Position comes
-// from InputGuard's virtual cursor rather than GetCursorPos — see
-// InputGuard.h and the comment on pollMouse — because InputGuard also blocks
-// raw mouse movement from reaching the game (so camera look actually stops),
-// which freezes the real OS cursor too. Buttons still come from
-// GetAsyncKeyState, which reflects physical state regardless of InputGuard
-// blocking the corresponding WM_* messages from propagating further.
+// once per frame from the Present hook while the menu is open: position from
+// GetCursorPos, buttons from GetAsyncKeyState.
+//
+// GetCursorPos is only trustworthy here because ui::InputGuard has actually
+// taken the pointer away from the game by then — unclipped, visible, and no
+// longer being re-centred every frame. Without that it reads a pointer the
+// game has pinned to the middle of the screen, which is exactly what "the
+// menu is open but I can't click anything" looked like.
 //
 // pollMouse is the SINGLE owner of button edges. Do not also raise edges from
 // the WndProc: the poll observes the physical button before the message
@@ -45,18 +46,37 @@ public:
     // derives this frame's press/release edges from the change since the last
     // poll. See the class comment for why this doesn't come from WM_* messages.
     void pollMouse(HWND hwnd) {
-        // InputGuard blocks raw mouse movement from reaching the game (and
-        // the real OS cursor) while the menu is open — see InputGuard.h —
-        // so GetCursorPos would just read a frozen, stale position here.
-        // Its own virtual cursor, accumulated from the same raw deltas
-        // before they were dropped, is the live one while the menu is open.
-        const auto [vx, vy] = InputGuard::get().cursorPos();
+        // The real OS pointer, in client coordinates. InputGuard takes the
+        // pointer away from the game while the menu is open (unclipping it,
+        // making it visible, and stopping the game re-centring it), so it
+        // genuinely tracks the mouse here — an earlier design read a virtual
+        // cursor accumulated from raw deltas instead, which was only ever
+        // needed because the pointer was still frozen by the game's own clip.
         const auto& renderer = Renderer::get();
         const float maxX = renderer.width()  > 0.0f ? renderer.width()  - 1.0f : 0.0f;
         const float maxY = renderer.height() > 0.0f ? renderer.height() - 1.0f : 0.0f;
-        m_x = std::clamp(vx, 0.0f, maxX);
-        m_y = std::clamp(vy, 0.0f, maxY);
-        (void)hwnd;   // no longer used — kept in the signature, see the .cpp caller
+
+        POINT p{};
+        if (GetCursorPos(&p) && hwnd) {
+            ScreenToClient(hwnd, &p);
+
+            // The client area and the back buffer are not always the same
+            // size — DPI scaling and borderless-fullscreen transitions both
+            // make them differ, and the overlay's coordinates are the back
+            // buffer's. Scaling here keeps the cursor on the widget it is
+            // visually over.
+            RECT client{};
+            float sx = 1.0f, sy = 1.0f;
+            if (GetClientRect(hwnd, &client)) {
+                const float cw = static_cast<float>(client.right - client.left);
+                const float ch = static_cast<float>(client.bottom - client.top);
+                if (cw > 0.0f && renderer.width()  > 0.0f) sx = renderer.width()  / cw;
+                if (ch > 0.0f && renderer.height() > 0.0f) sy = renderer.height() / ch;
+            }
+
+            m_x = std::clamp(static_cast<float>(p.x) * sx, 0.0f, maxX);
+            m_y = std::clamp(static_cast<float>(p.y) * sy, 0.0f, maxY);
+        }
 
         const bool l = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
         const bool r = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
@@ -92,6 +112,22 @@ public:
 
     void onKeyDown(int vk) { m_lastKey = vk; }
 
+    // Typed text, for the menu's search box. Buffered rather than applied
+    // directly because this arrives on the window thread while the menu is
+    // drawn on the render thread; takeChars() drains it there.
+    void onChar(wchar_t c) {
+        if (m_charCount < kMaxChars && (c == L'\b' || c >= L' ')) {
+            m_chars[m_charCount++] = c;
+        }
+    }
+
+    // Returns and clears everything typed since the last call.
+    std::wstring takeChars() {
+        std::wstring out(m_chars, m_chars + m_charCount);
+        m_charCount = 0;
+        return out;
+    }
+
     // ── Read by the menu ──
     float mouseX() const { return m_x; }
     float mouseY() const { return m_y; }
@@ -120,11 +156,14 @@ public:
         newFrame();
         m_leftDown = m_rightDown = false;
         m_lastKey = 0;
+        m_charCount = 0;
         m_polled = false;
     }
 
 private:
     Input() = default;
+
+    static constexpr int kMaxChars = 32;
 
     float m_x = 0, m_y = 0;
     bool  m_leftDown = false,  m_leftPressed = false,  m_leftReleased = false;
@@ -132,6 +171,9 @@ private:
     float m_scroll = 0.0f;
     int   m_lastKey = 0;
     bool  m_polled = false;   // has pollMouse established a button baseline?
+
+    wchar_t m_chars[kMaxChars]{};
+    int     m_charCount = 0;
 };
 
 } // namespace glacier::ui

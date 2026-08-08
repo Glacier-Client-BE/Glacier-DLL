@@ -19,7 +19,9 @@ public:
     WalkDistance()
         : TextHudModule("Walk Distance", "Tracks total distance travelled",
                     Category::Movement, 0,
-                    0.01f, 0.37f, 0xFFFFFFFF) {}
+                    0.01f, 0.37f, 0xFFFFFFFF) {
+        setIcon(0xF279);   // fa-map
+    }
 
     void onEnable() override {
         m_total = 0.0f;

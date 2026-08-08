@@ -1,10 +1,12 @@
 #include "Renderer.h"
 
 #include "../hook/D3DHook.h"
+#include "../resource.h"
 #include "../util/Logger.h"
 
 #include <algorithm>
 #include <d2d1effects.h>
+#include <dwrite_3.h>
 #include <iterator>
 #include <set>
 #include <string_view>
@@ -43,6 +45,11 @@ D2D1_COLOR_F toD2D(const Color& c) {
     return D2D1::ColorF(c.r, c.g, c.b, c.a);
 }
 
+// Address inside this DLL, used only to ask the OS which module that is —
+// GetModuleHandleExW(FROM_ADDRESS) needs something it can look up, and a
+// function-local static is the smallest honest answer. See ensureIconFont.
+const char kModuleAnchor = 0;
+
 // Reports a per-frame failure exactly once. These paths run at frame rate, so
 // an unguarded log would emit thousands of lines a second and bury the very
 // message it was meant to surface — which is how they ended up silent instead,
@@ -76,7 +83,14 @@ bool Renderer::initialize(ID3D11Device* /*gameDevice*/) {
 
 void Renderer::shutdown() {
     releaseTarget();
+    // Before m_dwrite: both were created through it, and the formats hold a
+    // reference to the icon collection.
     releaseFormats();
+    safeRelease(m_iconFont);
+    safeRelease(m_iconCollection);
+    m_iconFamily.clear();
+    m_glyphCoverage.clear();
+    m_iconResolved = false;
     safeRelease(m_dwrite);
     safeRelease(m_d3d11on12);
     safeRelease(m_d3d11on12Context);
@@ -428,8 +442,156 @@ void Renderer::releaseFormats() {
     m_formats.clear();
 }
 
-IDWriteTextFormat* Renderer::formatFor(float size, FontWeight weight, TextAlign align) {
-    const FormatKey key{ static_cast<int>(size * 4.0f), weight, align };
+void Renderer::ensureIconFont() {
+    if (m_iconResolved) return;
+    m_iconResolved = true;
+    if (!m_dwrite) return;
+
+    // The DLL's own module handle, taken from the address of this function
+    // rather than from Glacier::module(). The renderer has no other reason to
+    // know about the client object, and asking the OS is one call.
+    HMODULE self = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                            | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(&kModuleAnchor),
+                            &self) || !self) {
+        LOG_WARN("could not locate Glacier's own module — menu icons unavailable");
+        return;
+    }
+
+    const HRSRC found = FindResourceW(self, MAKEINTRESOURCEW(IDR_FONT_ICONS), RT_RCDATA);
+    const HGLOBAL loaded = found ? LoadResource(self, found) : nullptr;
+    const void* bytes = loaded ? LockResource(loaded) : nullptr;
+    const DWORD size = found ? SizeofResource(self, found) : 0;
+    if (!bytes || size == 0) {
+        LOG_WARN("embedded icon font resource missing — menu icons unavailable");
+        return;
+    }
+
+    // IDWriteFactory5 (Windows 10 1703+) is what makes this possible without
+    // writing the font to disk or installing it: an in-memory font file
+    // loader plus a font set built from it yields a collection only this
+    // process can see. Nothing about the machine's installed fonts changes.
+    IDWriteFactory5* factory5 = nullptr;
+    if (FAILED(m_dwrite->QueryInterface(__uuidof(IDWriteFactory5),
+                                        reinterpret_cast<void**>(&factory5))) || !factory5) {
+        LOG_WARN("DirectWrite is too old for in-memory fonts — menu icons unavailable");
+        return;
+    }
+
+    IDWriteInMemoryFontFileLoader* loader = nullptr;
+    IDWriteFontFile*               file   = nullptr;
+    IDWriteFontSetBuilder1*        builder = nullptr;
+    IDWriteFontSet*                set    = nullptr;
+    IDWriteFontCollection1*        collection = nullptr;
+
+    // The resource stays mapped for the lifetime of the module, so the loader
+    // may reference the bytes directly — no owner object and no copy.
+    bool ok = SUCCEEDED(factory5->CreateInMemoryFontFileLoader(&loader)) && loader
+           && SUCCEEDED(factory5->RegisterFontFileLoader(loader))
+           && SUCCEEDED(loader->CreateInMemoryFontFileReference(factory5, bytes, size,
+                                                                nullptr, &file)) && file
+           && SUCCEEDED(factory5->CreateFontSetBuilder(&builder)) && builder
+           && SUCCEEDED(builder->AddFontFile(file))
+           && SUCCEEDED(builder->CreateFontSet(&set)) && set
+           && SUCCEEDED(factory5->CreateFontCollectionFromFontSet(set, &collection)) && collection;
+
+    // The family name is read back from the font rather than hardcoded:
+    // "Font Awesome 6 Free" and "Font Awesome 6 Free Solid" are both in its
+    // name table, and which one DirectWrite groups the collection under is
+    // its business, not ours.
+    if (ok) {
+        IDWriteFontFamily* family = nullptr;
+        if (collection->GetFontFamilyCount() > 0
+            && SUCCEEDED(collection->GetFontFamily(0, &family)) && family) {
+            IDWriteLocalizedStrings* names = nullptr;
+            if (SUCCEEDED(family->GetFamilyNames(&names)) && names) {
+                UINT32 length = 0;
+                if (SUCCEEDED(names->GetStringLength(0, &length)) && length > 0) {
+                    m_iconFamily.resize(length + 1);
+                    if (SUCCEEDED(names->GetString(0, m_iconFamily.data(), length + 1))) {
+                        m_iconFamily.resize(length);
+                    } else {
+                        m_iconFamily.clear();
+                    }
+                }
+                names->Release();
+            }
+            family->GetFirstMatchingFont(DWRITE_FONT_WEIGHT_BLACK, DWRITE_FONT_STRETCH_NORMAL,
+                                         DWRITE_FONT_STYLE_NORMAL, &m_iconFont);
+            family->Release();
+        }
+        ok = !m_iconFamily.empty() && m_iconFont != nullptr;
+    }
+
+    if (ok) {
+        m_iconCollection = collection;   // kept; released in shutdown()
+        collection = nullptr;
+        LOG_INFO("icon font loaded from the embedded resource ('{}', {} bytes)",
+                 std::string(m_iconFamily.begin(), m_iconFamily.end()), size);
+    } else {
+        LOG_WARN("embedded icon font failed to load — the menu will draw its own fallback marks");
+        safeRelease(m_iconFont);
+        m_iconFamily.clear();
+    }
+
+    safeRelease(collection);
+    safeRelease(set);
+    safeRelease(builder);
+    safeRelease(file);
+    // The loader stays registered for as long as the collection is alive; the
+    // factory keeps its own reference, so dropping ours here is correct.
+    safeRelease(loader);
+    safeRelease(factory5);
+}
+
+bool Renderer::hasGlyph(wchar_t glyph) {
+    if (!m_ready) return false;
+    if (const auto it = m_glyphCoverage.find(glyph); it != m_glyphCoverage.end()) return it->second;
+
+    ensureIconFont();
+
+    bool covered = false;
+    if (m_iconFont) {
+        BOOL has = FALSE;
+        if (SUCCEEDED(m_iconFont->HasCharacter(static_cast<UINT32>(glyph), &has))) {
+            covered = has != FALSE;
+        }
+    }
+
+    m_glyphCoverage.emplace(glyph, covered);
+    return covered;
+}
+
+bool Renderer::drawGlyph(wchar_t glyph, const Rect& box, const Color& c, float size) {
+    if (!m_drawing || !hasGlyph(glyph)) return false;
+
+    IDWriteTextFormat* fmt = formatFor(size, FontWeight::Normal, TextAlign::Center,
+                                       FontFamily::Icon);
+    if (!fmt) return false;
+
+    m_brush->SetColor(toD2D(c));
+    m_d2d->DrawTextW(&glyph, 1, fmt,
+                     D2D1::RectF(box.x, box.y, box.right(), box.bottom()), m_brush,
+                     D2D1_DRAW_TEXT_OPTIONS_NONE);
+    return true;
+}
+
+void Renderer::fillEllipse(float cx, float cy, float rx, float ry, const Color& c) {
+    if (!m_drawing) return;
+    m_brush->SetColor(toD2D(c));
+    m_d2d->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), rx, ry), m_brush);
+}
+
+void Renderer::drawLine(float x1, float y1, float x2, float y2, const Color& c, float thickness) {
+    if (!m_drawing) return;
+    m_brush->SetColor(toD2D(c));
+    m_d2d->DrawLine(D2D1::Point2F(x1, y1), D2D1::Point2F(x2, y2), m_brush, thickness);
+}
+
+IDWriteTextFormat* Renderer::formatFor(float size, FontWeight weight, TextAlign align,
+                                       FontFamily family) {
+    const FormatKey key{ static_cast<int>(size * 4.0f), weight, align, family };
     if (auto it = m_formats.find(key); it != m_formats.end()) return it->second;
 
     DWRITE_FONT_WEIGHT dw = DWRITE_FONT_WEIGHT_NORMAL;
@@ -440,9 +602,20 @@ IDWriteTextFormat* Renderer::formatFor(float size, FontWeight weight, TextAlign 
         default:                   dw = DWRITE_FONT_WEIGHT_NORMAL;    break;
     }
 
+    // Icon text always resolves through the private collection built from the
+    // embedded resource — never the system font list, which does not contain
+    // this family and would silently substitute Segoe UI (i.e. tofu).
+    const bool icon = (family == FontFamily::Icon);
+    if (icon) {
+        ensureIconFont();
+        if (!m_iconCollection || m_iconFamily.empty()) return nullptr;
+        dw = DWRITE_FONT_WEIGHT_BLACK;   // Font Awesome Solid's own weight
+    }
+
     IDWriteTextFormat* fmt = nullptr;
     if (FAILED(m_dwrite->CreateTextFormat(
-            L"Segoe UI", nullptr, dw,
+            icon ? m_iconFamily.c_str() : L"Segoe UI",
+            icon ? m_iconCollection : nullptr, dw,
             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
             size, L"en-us", &fmt))) {
         return nullptr;

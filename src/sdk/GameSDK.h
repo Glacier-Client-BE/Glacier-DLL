@@ -126,9 +126,10 @@ public:
     // bug. Distinct from cursorControlAvailable(): that one only says the
     // pattern matched something, not that the something is right. Starts
     // true and latches false permanently for the session on the first
-    // observed failure, so Glacier::setCursorReleased's ShowCursor fallback
-    // can kick in without needing the signature to have failed to resolve
-    // at all.
+    // observed failure. Note that ui::InputGuard owns the OS pointer
+    // regardless of what this reports — this flag only governs whether it is
+    // still worth calling the game's own grab/release each frame to keep
+    // cursorGrabbed() meaningful.
     bool cursorControlWorking() const {
         return m_cursorControlWorking.load(std::memory_order_relaxed);
     }

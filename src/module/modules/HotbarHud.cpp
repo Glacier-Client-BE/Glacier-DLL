@@ -22,6 +22,7 @@ public:
         : HudModule("Hotbar HUD", "Shows all 9 hotbar slots",
                     Category::Player, 0,
                     0.30f, 0.90f, 0xFFFFFFFF) {
+        setIcon(0xF00A);   // fa-table-cells
         addSetting(Setting{ "slot", "Slot size", 28.0f, 18.0f, 56.0f, 1.0f });
         addSetting(Setting{ "gap", "Spacing", 3.0f, 0.0f, 14.0f, 1.0f });
         addSetting(Setting{ "counts", "Stack counts", true });

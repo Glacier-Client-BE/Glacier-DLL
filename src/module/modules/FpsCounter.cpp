@@ -14,6 +14,7 @@ public:
         : TextHudModule("FPS Counter", "Shows the current frame rate",
                     Category::Misc, 0,
                     0.01f, 0.05f, 0xFFFFFFFF) {
+        setIcon(0xF625);   // fa-gauge-high
         addSetting(Setting{ "label", "Show \"FPS\" label", true });
         addSetting(Setting{ "colorcode", "Color by performance", false });
     }

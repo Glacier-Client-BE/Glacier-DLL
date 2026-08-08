@@ -22,6 +22,7 @@ public:
         : HudModule("Keystrokes", "Displays movement keys and mouse buttons",
                     Category::Movement, 0,
                     0.02f, 0.55f, 0xFFFFFFFF) {
+        setIcon(0xF11C);   // fa-keyboard
         addSetting(Setting{ "size", "Key size", 26.0f, 16.0f, 48.0f, 1.0f });
         addSetting(Setting{ "gap", "Spacing", 3.0f, 0.0f, 12.0f, 1.0f });
         addSetting(Setting{ "mouse", "Show mouse buttons", true });

@@ -21,6 +21,7 @@ public:
     CustomCrosshair()
         : Module("Custom Crosshair", "Draws a crosshair over the center of the screen",
                  Category::Visual, 0) {
+        setIcon(0xF05B);   // fa-crosshairs
         addSetting(Setting{ "size", "Arm length", 8.0f, 2.0f, 30.0f, 1.0f });
         addSetting(Setting{ "gap", "Center gap", 4.0f, 0.0f, 20.0f, 1.0f });
         addSetting(Setting{ "thickness", "Thickness", 2.0f, 1.0f, 8.0f, 0.5f });

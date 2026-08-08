@@ -64,6 +64,17 @@ struct Rect {
 
 enum class TextAlign { Left, Center, Right };
 
+// Which typeface a piece of text is drawn in.
+//
+// `Icon` is Font Awesome 6 Free (Solid), embedded in the DLL as a resource and
+// loaded into a private DirectWrite collection — it is never installed on the
+// machine and never visible to anything else in the process. Windows' own
+// symbol fonts were the obvious alternative and are the wrong choice here:
+// Windows 10 ships Segoe MDL2 Assets, Windows 11 ships Segoe Fluent Icons,
+// they disagree on both name and coverage, and this client is tested across
+// both. Even so, nothing draws an icon blind — see Renderer::hasGlyph.
+enum class FontFamily { UI, Icon };
+
 // Text weight, replacing an earlier `bool bold`.
 //
 // The bool only offered Normal and SemiBold, and every HUD widget passed true —
@@ -116,6 +127,22 @@ public:
     // sit on a common rhythm.
     float lineHeight(float size, FontWeight weight = FontWeight::Normal);
 
+    // ── Icons ──
+    //
+    // Draws one Font Awesome codepoint centred in `box`. Returns false —
+    // having drawn nothing — if the embedded font failed to load or does not
+    // cover that codepoint, so the caller can put its own mark there instead
+    // of a tofu box.
+    bool drawGlyph(wchar_t glyph, const Rect& box, const Color& c, float size);
+
+    // Whether drawGlyph would actually draw `glyph`. Cached per codepoint —
+    // the lookup goes through DirectWrite and is far too slow to repeat per
+    // frame, per icon.
+    bool hasGlyph(wchar_t glyph);
+
+    void fillEllipse(float cx, float cy, float rx, float ry, const Color& c);
+    void drawLine(float x1, float y1, float x2, float y2, const Color& c, float thickness = 1.0f);
+
     void pushClip(const Rect& r);
     void popClip();
 
@@ -152,21 +179,36 @@ private:
         int  quarterSize;   // size * 4, so half-point sizes still key distinctly
         FontWeight weight;
         TextAlign align;
+        FontFamily family;
         bool operator==(const FormatKey& o) const {
-            return quarterSize == o.quarterSize && weight == o.weight && align == o.align;
+            return quarterSize == o.quarterSize && weight == o.weight
+                && align == o.align && family == o.family;
         }
     };
     struct FormatKeyHash {
         std::size_t operator()(const FormatKey& k) const noexcept {
-            return static_cast<std::size_t>(k.quarterSize) * 16
-                 + static_cast<std::size_t>(k.weight) * 4
-                 + static_cast<std::size_t>(k.align);
+            return static_cast<std::size_t>(k.quarterSize) * 64
+                 + static_cast<std::size_t>(k.weight) * 16
+                 + static_cast<std::size_t>(k.align) * 4
+                 + static_cast<std::size_t>(k.family);
         }
     };
     std::unordered_map<FormatKey, IDWriteTextFormat*, FormatKeyHash> m_formats;
 
-    IDWriteTextFormat* formatFor(float size, FontWeight weight, TextAlign align);
+    IDWriteTextFormat* formatFor(float size, FontWeight weight, TextAlign align,
+                                 FontFamily family = FontFamily::UI);
     void releaseFormats();
+
+    // Loads the embedded Font Awesome resource into a private DirectWrite
+    // collection. Runs once, on first icon use; latches on failure so a
+    // machine where it doesn't work doesn't retry (and re-log) per frame.
+    void ensureIconFont();
+
+    IDWriteFontCollection* m_iconCollection = nullptr;
+    IDWriteFont*           m_iconFont       = nullptr;   // for HasCharacter
+    std::wstring           m_iconFamily;
+    bool                   m_iconResolved   = false;
+    std::unordered_map<wchar_t, bool> m_glyphCoverage;
 
     // Everything below lives on the GAME's device. m_d2d and m_target both hold
     // a reference to the back buffer, which is why resize() drops them.

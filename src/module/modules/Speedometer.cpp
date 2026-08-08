@@ -23,6 +23,7 @@ public:
         : TextHudModule("Speedometer", "Shows your horizontal speed",
                     Category::Movement, 0,
                     0.01f, 0.33f, 0xFFFFFFFF) {
+        setIcon(0xF70C);   // fa-person-running
         addSetting(Setting{ "vertical", "Include vertical speed", false });
     }
 

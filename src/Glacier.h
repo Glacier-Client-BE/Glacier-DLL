@@ -11,6 +11,12 @@ namespace glacier {
 
 class Glacier {
 public:
+    // Client version, shown in the menu header. Kept here rather than in the
+    // UI so the launcher export planned for Phase 11 has one place to read it
+    // from — a version string that lives in a draw call is a version string
+    // that will disagree with the release tag.
+    static constexpr const char* kVersion = "1.0.0";
+
     static Glacier& get() {
         static Glacier instance;
         return instance;
@@ -48,6 +54,13 @@ public:
     // state to read back — Flarial's F1Listener is purely client-side, a
     // bool it flips itself — so this is the same: a toggle Glacier owns, not
     // a reflection of anything the game is doing.
+    // Closes the menu and hands the pointer back, for the menu's own close
+    // button. Every other close goes through the key poll in start(); this
+    // exists so the button cannot become a second, subtly different one —
+    // closing the menu without also releasing the input guard would leave the
+    // player unable to move with nothing on screen to explain why.
+    void closeMenu();
+
     int  hudToggleKey() const { return m_hudToggleKey; }
     void setHudToggleKey(int vk) { m_hudToggleKey = vk; }
     bool hudHidden() const { return m_hudHidden.load(std::memory_order_relaxed); }
@@ -85,16 +98,11 @@ private:
     void restoreWindowTitle();
     static LRESULT CALLBACK wndProc(HWND, UINT, WPARAM, LPARAM);
 
-    // Hands the OS cursor between the game and the menu. Ported directly from
-    // Flarial's CursorHandler::grabCursor/releaseCursor (see
-    // reference/flarial/src/Client/Hook/Hooks/Input/CursorHandler.hpp) —
-    // pure OS APIs (ClipCursor/SetCapture/ShowCursor), no game signature
-    // involved at all. Driving the game's own grabCursor()/releaseCursor()
-    // (still done separately, in the Present hook, to keep cursorGrabbed()
-    // accurate for other code that reads it) turned out not to reliably
-    // free the cursor for the menu nor reliably hand it back to the game on
-    // close — this is what both reference clients actually rely on instead.
-    static void setCursorReleased(bool released);
+    // Cursor handoff lives in ui::InputGuard now, not here. It has to run on
+    // the window's own thread — SetCapture/ShowCursor/SetCursor all act on
+    // the calling thread's input state, and this class only ever ran them
+    // from the render or logic thread, where they did nothing at all. See
+    // ui/InputGuard.h; wndProc below is where that work lands.
 
     static bool isGameInputMessage(UINT msg);
 

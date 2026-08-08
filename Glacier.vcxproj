@@ -147,6 +147,12 @@
     <ClInclude Include="src\ui\HudEditor.h" />
     <ClInclude Include="src\ui\InputGuard.h" />
     <ClInclude Include="src\util\FrameStats.h" />
+    <ClInclude Include="src\resource.h" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Embeds assets/fonts/fa-solid-900.ttf; see src/resource.h. -->
+    <ResourceCompile Include="src\Glacier.rc" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -19,6 +19,7 @@ public:
         : TextHudModule("Reach Display", "Shows the distance of your last hit",
                     Category::Combat, 0,
                     0.01f, 0.25f, 0xFFFFFFFF) {
+        setIcon(0xF545);   // fa-ruler
         addSetting(Setting{ "hold", "Seconds to display", 3.0f, 0.5f, 15.0f, 0.5f });
         addSetting(Setting{ "fade", "Fade out", true });
     }

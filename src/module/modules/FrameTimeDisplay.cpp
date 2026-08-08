@@ -15,7 +15,9 @@ public:
     FrameTimeDisplay()
         : TextHudModule("Frame Time", "Shows milliseconds per frame",
                     Category::Misc, 0,
-                    0.01f, 0.07f, 0xFFFFFFFF) {}
+                    0.01f, 0.07f, 0xFFFFFFFF) {
+        setIcon(0xF201);   // fa-chart-line
+    }
 
     void buildLines(std::vector<Line>& out) override {
         char buf[24];

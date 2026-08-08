@@ -22,6 +22,7 @@ public:
         : TextHudModule("Low Durability", "Warns when armor is close to breaking",
                     Category::Player, 0,
                     0.30f, 0.01f, 0xFFF87171) {
+        setIcon(0xF0AD);   // fa-wrench
         addSetting(Setting{ "threshold", "Warn below (%)", 15.0f, 1.0f, 50.0f, 1.0f });
     }
 

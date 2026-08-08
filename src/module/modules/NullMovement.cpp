@@ -143,7 +143,9 @@ class NullMovement final : public Module {
 public:
     NullMovement()
         : Module("Null Movement", "Opposite movement keys no longer cancel out",
-                 Category::Movement, 0) {}
+                 Category::Movement, 0) {
+        setIcon(0xF256);   // fa-hand-paper
+    }
 
     void onEnable() override {
         if (g_running.exchange(true)) return;

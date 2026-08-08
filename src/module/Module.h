@@ -49,6 +49,13 @@ public:
     const std::string& name() const { return m_name; }
     const std::string& description() const { return m_description; }
     Category category() const { return m_category; }
+
+    // Font Awesome codepoint for the menu's module grid, or 0 for "no opinion"
+    // — the menu falls back to the module's category glyph, and then to a
+    // lettered tile, so a module that never calls setIcon still renders
+    // something deliberate. The value is just a number here: Module knows
+    // nothing about fonts, and the UI is the only thing that resolves it.
+    wchar_t icon() const { return m_icon; }
     int  keybind() const { return m_keybind; }
     void setKeybind(int vk) { m_keybind = vk; }
 
@@ -75,12 +82,16 @@ protected:
         return m_settings.emplace_back(std::forward<Args>(args)...);
     }
 
+    // Called from a concrete module's constructor. See icon().
+    void setIcon(wchar_t codepoint) { m_icon = codepoint; }
+
 private:
     std::string m_name;
     std::string m_description;
     Category    m_category;
     int         m_keybind;
     bool        m_enabled = false;
+    wchar_t     m_icon = 0;
     std::vector<Setting> m_settings;
 };
 

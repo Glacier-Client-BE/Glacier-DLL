@@ -1,28 +1,55 @@
 #pragma once
 
-#include <utility>
+#include <Windows.h>
 
-// Freezes player movement/attack/look input while Glacier's menu is open,
-// the same way a real Bedrock Screen does (Latite/Flarial included) — the
-// player cannot walk, jump, sneak, sprint, attack/use, or turn the camera
-// behind the menu.
+// Hands input and the mouse pointer between the game and Glacier's menu.
 //
-// Why this exists alongside GameSDK::applyCursorState: releaseCursor() only
-// controls the game's OWN cursor-grab flag, and in practice that flag
-// flipping does not reliably stop either movement or camera look — see the
-// history in docs/HANDOFF.md. A Screen normally intercepts all of this
-// before gameplay ever sees it; Glacier's menu is a D2D overlay, not a real
-// Screen, so nothing was ever intercepting it. This is that interception,
-// done at the OS input level (WH_KEYBOARD_LL / WH_MOUSE_LL) — the same
-// technique NullMovement already uses for WASD.
+// ── Why the previous design could not work ──
 //
-// Mouse movement is blocked too now (it wasn't originally — see the removed
-// comment in git history), which means the real OS cursor stops moving
-// while the menu is open. That's why this also maintains its own virtual
-// cursor position, fed from the same raw deltas before they're dropped:
-// ui::Input reads it instead of GetCursorPos while the menu is open (see
-// Input::pollMouse), so the menu can still be clicked with the camera look
-// it drives fully decoupled from the game's.
+// Two independent mistakes, both invisible from the code and both proven by
+// the same symptom ("the menu opens, the mouse turns my head, and I can't
+// click anything"):
+//
+//  1. **Bedrock reads mouse look through Raw Input, and a WH_MOUSE_LL hook
+//     does not intercept Raw Input.** Low-level hooks sit on the message
+//     path. RIM_TYPEMOUSE deltas are delivered separately and never pass
+//     through them, so swallowing WM_MOUSEMOVE stopped the OS *pointer*
+//     while the game's *camera* carried on reading the real motion. The
+//     keyboard half of the same hook did work — that asymmetry is exactly
+//     what a Raw-Input mouse and a message-queue keyboard look like.
+//
+//  2. **Cursor state is per-thread, and none of it was being set on the
+//     window's thread.** SetCapture, ReleaseCapture, ShowCursor and SetCursor
+//     all act on the calling thread's input state. They were being called
+//     from the Present hook (the game's render thread) and from Glacier's own
+//     logic thread, where they are silently no-ops for the game's window.
+//     That is why a log could report the cursor "released (ok)" with nothing
+//     whatsoever having changed on screen.
+//
+// ── What replaces it ──
+//
+//  * **Camera look and clicks** are stopped at the source: GetRawInputData
+//    and GetRawInputBuffer are hooked, and while the menu is open every
+//    RIM_TYPEMOUSE record they hand back has its deltas and button flags
+//    zeroed. The game still receives its input events and keeps its internal
+//    state consistent; the events just say the mouse did not move. This is
+//    the API-level equivalent of what Flarial does one layer lower by
+//    hooking MouseDevice::feed / InputHandler::tick (see
+//    reference/flarial/src/Client/Hook/Hooks/Input/MouseHook.cpp) — same
+//    effect, no game signature to break on the next update.
+//
+//  * **The pointer** is taken away from the game by hooking ClipCursor,
+//    SetCursorPos, SetCapture, ShowCursor and SetCursor, so the game cannot
+//    re-hide or re-clip it on the next frame — Flarial hooks ClipCursor for
+//    precisely this reason (ClipCursorHook.hpp). What the game asked for is
+//    remembered and handed back when the menu closes.
+//
+//  * **All of that is applied on the window thread**, by posting a private
+//    message to the game window and doing the work inside Glacier's WndProc.
+//    See onSyncMessage.
+//
+//  * **Movement keys** keep the WH_KEYBOARD_LL hook, which is confirmed
+//    working in-game; the mouse half of that hook is gone.
 namespace glacier::ui {
 
 class InputGuard {
@@ -32,26 +59,40 @@ public:
         return instance;
     }
 
-    // Installs the low-level hooks on a dedicated pump thread. Call once,
-    // during Glacier::start(). Safe to call again if already active.
+    // Installs the low-level keyboard hook on a dedicated pump thread. Call
+    // once during Glacier::start(). Safe to call again if already running.
     void start();
 
-    // Removes the hooks and joins the pump thread. Call once, during
-    // Glacier's teardown.
+    // Hooks the Win32 pointer and Raw Input entry points. Must come after
+    // HookManager::initialize(); the hooks are owned by the HookManager and
+    // removed by its shutdown().
+    bool installApiHooks();
+
+    // Stops the pump thread and stops this object using its trampolines.
+    // Must run BEFORE HookManager::shutdown(), which frees them.
     void stop();
 
-    // Whether movement/attack/look input is currently being suppressed.
-    // Driven every frame from the Present hook off ui::Menu::open(), the
-    // same way setCursorReleased is. On the false->true edge, seeds the
-    // virtual cursor from the real OS cursor position (via GetCursorPos)
-    // so it doesn't jump when the menu opens.
-    void setActive(bool active);
+    // The single switch. Safe from any thread: it flips the atomic the
+    // detours read, then posts the cursor work to the window thread.
+    void setMenuOpen(bool open);
+    bool menuOpen() const;
 
-    // Client-space virtual cursor position, accumulated from raw mouse
-    // deltas while active. Meaningless (and unmoving) while inactive — the
-    // real GetCursorPos is authoritative then. Not clamped to the screen;
-    // the caller clamps against its own known bounds (see Input::pollMouse).
-    std::pair<float, float> cursorPos();
+    // Re-posts the cursor sync at most a few times a second while the menu is
+    // open. Cheap self-healing: if anything ever does get the pointer back
+    // (an alt-tab, a screen the game pushes on its own), the menu recovers
+    // without the user having to close and reopen it.
+    void reassert();
+
+    // ── Window thread only ──
+
+    // Private message used to marshal cursor work onto the window thread.
+    // Registered, not a WM_APP constant, so it cannot collide with anything
+    // the game or another injected DLL uses.
+    UINT syncMessage() const;
+
+    // Handles that message. Called from Glacier::wndProc, which is the whole
+    // point: that is the one place Glacier runs on the window's own thread.
+    void onSyncMessage(WPARAM wParam);
 
 private:
     InputGuard() = default;

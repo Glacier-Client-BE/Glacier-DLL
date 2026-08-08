@@ -20,6 +20,7 @@ public:
         : TextHudModule("Coordinates", "Shows your position in the world",
                     Category::Player, 0,
                     0.01f, 0.13f, 0xFFFFFFFF) {
+        setIcon(0xF3C5);   // fa-location-dot
         addSetting(Setting{ "decimals", "Decimal places", 1, 0, 3 });
         addSetting(Setting{ "labels", "Show X/Y/Z labels", true });
         addSetting(Setting{ "nether", "Show Nether conversion", false });

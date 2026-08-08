@@ -31,6 +31,7 @@ public:
         : TextHudModule("Combo Counter", "Counts consecutive confirmed hits",
                     Category::Combat, 0,
                     0.01f, 0.45f, 0xFFFFFFFF) {
+        setIcon(0xF6DE);   // fa-hand-fist
         addSetting(Setting{ "window", "Confirm window (ms)", 600.0f, 100.0f, 2000.0f, 50.0f });
     }
 

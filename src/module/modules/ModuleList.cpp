@@ -18,6 +18,7 @@ public:
         : HudModule("Module List", "Lists your enabled modules",
                     Category::Visual, 0,
                     0.86f, 0.02f, 0xFF4C9AFF) {
+        setIcon(0xF0C9);   // fa-bars
         addSetting(Setting{ "sort", "Sort by name length", true });
         addSetting(Setting{ "right", "Right-align", true });
     }

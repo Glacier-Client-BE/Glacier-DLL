@@ -322,10 +322,11 @@ bool GameSDK::cursorGrabbed() const {
 }
 
 void GameSDK::applyCursorState(bool menuOpen) {
-    // Once we've SEEN the call fail to do anything, stop trusting it and let
-    // Glacier::setCursorReleased's ShowCursor/ClipCursor fallback take over
-    // instead — better than calling a function every frame that's already
-    // been proven not to work.
+    // Once we've SEEN the call fail to do anything, stop trusting it. The
+    // pointer itself is ui::InputGuard's job either way; this call only keeps
+    // the game's own cursorGrabbed() flag honest, which other code reads.
+    // Calling a function every frame that's already been proven not to work
+    // buys nothing.
     if (!cursorControlAvailable() || !cursorControlWorking()) return;
 
     void* ci = clientInstance();

@@ -19,6 +19,7 @@ public:
         : TextHudModule("Stopwatch", "A manual start/pause/reset timer",
                     Category::Misc, 0,
                     0.01f, 0.41f, 0xFFFFFFFF) {
+        setIcon(0xF2F2);   // fa-stopwatch
         addSetting(Setting{ "start", "Start/Pause key", Setting::KeyTag{}, 'P' });
         addSetting(Setting{ "reset", "Reset key", Setting::KeyTag{}, 'L' });
     }

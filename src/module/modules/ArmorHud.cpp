@@ -38,6 +38,7 @@ public:
         : HudModule("Armor HUD", "Shows equipped armor and durability",
                     Category::Player, 0,
                     0.42f, 0.80f, 0xFFFFFFFF) {
+        setIcon(0xF3ED);   // fa-shield-halved
         addSetting(Setting{ "slot", "Slot size", 30.0f, 18.0f, 56.0f, 1.0f });
         addSetting(Setting{ "gap", "Spacing", 4.0f, 0.0f, 14.0f, 1.0f });
         addSetting(Setting{ "vertical", "Vertical layout", false });

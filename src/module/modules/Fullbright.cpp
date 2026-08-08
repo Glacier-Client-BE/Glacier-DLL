@@ -19,6 +19,7 @@ class Fullbright final : public Module {
 public:
     Fullbright()
         : Module("Fullbright", "Brightens the world to remove darkness", Category::Visual, 'B') {
+        setIcon(0xF0EB);   // fa-lightbulb
         // 0..25, not 0..1. The game's gamma is not a normalized fraction: 1.0 is
         // *normal* brightness, which is why a 0..1 slider defaulting to 1.0 made
         // Fullbright look like it did nothing at all. Latite uses the same range.
