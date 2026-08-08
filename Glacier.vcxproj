@@ -118,6 +118,9 @@
     <ClCompile Include="src\module\modules\Stopwatch.cpp" />
     <ClCompile Include="src\module\modules\DvdScreen.cpp" />
     <ClCompile Include="src\module\modules\CustomCrosshair.cpp" />
+    <ClCompile Include="src\module\modules\MemoryUsage.cpp" />
+    <ClCompile Include="src\module\modules\InventorySpace.cpp" />
+    <ClCompile Include="src\module\modules\ToolDurability.cpp" />
   </ItemGroup>
 
   <ItemGroup>
