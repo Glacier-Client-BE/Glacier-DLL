@@ -10,6 +10,7 @@
 #include "sdk/HitConfirmation.h"
 #include "sdk/ItemRendering.h"
 #include "ui/Input.h"
+#include "ui/InputGuard.h"
 #include "ui/KeyNames.h"
 #include "ui/Menu.h"
 #include "ui/Renderer.h"
@@ -70,6 +71,10 @@ void Glacier::start(HMODULE self) {
 
     sdk::GameSDK::get().installHooks();
 
+    // Movement/attack blocking while the menu is open — see ui/InputGuard.h.
+    // OS-level, not a game hook, so it starts independently of SDK resolution.
+    ui::InputGuard::get().start();
+
     // Restore saved settings. Deliberately after installHooks(): loading can
     // re-enable a module, whose onEnable() may depend on a hook being live, and
     // a module that reports "my hook didn't resolve" should do so accurately.
@@ -125,6 +130,11 @@ void Glacier::start(HMODULE self) {
         // ShowCursor fallback needs a chance to engage on whichever frame
         // that happens on — not just the one where the menu was toggled.
         setCursorReleased(ui::Menu::get().open());
+
+        // Movement/attack are a separate path from cursor grab entirely (see
+        // ui/InputGuard.h) — driven every frame for the same reason as
+        // setCursorReleased above.
+        ui::InputGuard::get().setActive(ui::Menu::get().open());
 
         // Sample the mouse before anything hit-tests it. Polled rather than
         // taken from WM_* messages because Bedrock consumes the mouse through
@@ -244,6 +254,7 @@ void Glacier::start(HMODULE self) {
             if (!inGame && ui::Menu::get().open()) {
                 ui::Menu::get().setOpen(false);
                 setCursorReleased(false);
+                ui::InputGuard::get().setActive(false);
             }
 
             const bool gDown   = (GetAsyncKeyState(m_menuKey)     & 0x8000) != 0;
@@ -261,9 +272,11 @@ void Glacier::start(HMODULE self) {
                 if (!open && gameplayActive && (gPressed || mPressed)) {
                     ui::Menu::get().setOpen(true);
                     setCursorReleased(true);
+                    ui::InputGuard::get().setActive(true);
                 } else if (open && (gPressed || escPressed)) {
                     ui::Menu::get().setOpen(false);
                     setCursorReleased(false);
+                    ui::InputGuard::get().setActive(false);
                 }
             }
 
@@ -347,6 +360,7 @@ void Glacier::start(HMODULE self) {
     removeWndProc();
     restoreWindowTitle();
     ui::Menu::get().setOpen(false);
+    ui::InputGuard::get().stop();
 
     // Final save before anything is torn down, so state changed since the last
     // menu close isn't lost on unload.

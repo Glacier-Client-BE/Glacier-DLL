@@ -96,6 +96,7 @@
     <ClCompile Include="src\ui\Renderer.cpp" />
     <ClCompile Include="src\ui\Menu.cpp" />
     <ClCompile Include="src\ui\HudEditor.cpp" />
+    <ClCompile Include="src\ui\InputGuard.cpp" />
     <ClCompile Include="src\module\modules\FpsCounter.cpp" />
     <ClCompile Include="src\module\modules\Keystrokes.cpp" />
     <ClCompile Include="src\module\modules\CpsCounter.cpp" />
@@ -144,6 +145,7 @@
     <ClInclude Include="src\ui\Input.h" />
     <ClInclude Include="src\ui\KeyNames.h" />
     <ClInclude Include="src\ui\HudEditor.h" />
+    <ClInclude Include="src\ui\InputGuard.h" />
     <ClInclude Include="src\util\FrameStats.h" />
   </ItemGroup>
 
