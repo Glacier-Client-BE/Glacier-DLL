@@ -2,6 +2,7 @@
 
 #include "ModuleRegistry.h"
 #include "../core/Config.h"
+#include "../util/CrashHandler.h"
 #include "../util/Logger.h"
 
 #include <algorithm>
@@ -52,7 +53,28 @@ void ModuleManager::shutdown() {
     m_initialized = false;
 }
 
+void ModuleManager::requestToggle(Module* module) {
+    if (!module) return;
+    std::scoped_lock lock(m_pendingMutex);
+    m_pendingToggles.push_back(module);
+}
+
 void ModuleManager::tickAll() {
+    // Drained before the ticks, and outside m_mutex, so a module's onEnable can
+    // do whatever it likes — including blocking — without holding a lock the
+    // render thread might want. See requestToggle for why this is deferred at
+    // all rather than applied where the click happened.
+    std::vector<Module*> toggles;
+    {
+        std::scoped_lock lock(m_pendingMutex);
+        toggles.swap(m_pendingToggles);
+    }
+    for (Module* m : toggles) {
+        GLACIER_ACTIVITY("toggling a module from the menu");
+        m->toggle();
+        LOG_INFO("{} {}", m->name(), m->enabled() ? "enabled" : "disabled");
+    }
+
     std::scoped_lock lock(m_mutex);
     for (auto& m : m_modules) {
         m->onTick();

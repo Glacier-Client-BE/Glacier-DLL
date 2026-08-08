@@ -6,6 +6,7 @@
 #include "../Glacier.h"
 #include "../core/Config.h"
 #include "../module/ModuleManager.h"
+#include "../util/CrashHandler.h"
 #include "../util/FrameStats.h"
 #include "../util/Logger.h"
 
@@ -151,6 +152,10 @@ bool Menu::matchesFilter(const Module& module) const {
 
 void Menu::render() {
     if (!m_open) return;
+
+    // So a fault in here is reported as the menu rather than as "(idle)" —
+    // this runs on the game's render thread, where nothing else would name it.
+    GLACIER_ACTIVITY("drawing and hit-testing the menu");
 
     auto& r  = Renderer::get();
     auto& in = Input::get();
@@ -482,8 +487,10 @@ void Menu::drawCard(Module& module, const Rect& card) {
                on ? kAccent : kTextFaint, 9.5f, TextAlign::Center, FontWeight::SemiBold);
 
     if (overCard && Input::get().leftPressed()) {
-        module.toggle();
-        LOG_INFO("{} {}", module.name(), module.enabled() ? "enabled" : "disabled");
+        // Queued, not applied here — this runs on the game's render thread and
+        // onEnable/onDisable are not safe there. See
+        // ModuleManager::requestToggle.
+        ModuleManager::get().requestToggle(&module);
     }
 }
 
@@ -522,8 +529,7 @@ void Menu::drawDetail(const Rect& area, Module& module) {
 
     const Rect masterToggle{ head.right() - 46.0f, head.y + (head.h - 24.0f) * 0.5f, 46.0f, 24.0f };
     if (widgetToggle(masterToggle, module.enabled())) {
-        module.toggle();
-        LOG_INFO("{} {}", module.name(), module.enabled() ? "enabled" : "disabled");
+        ModuleManager::get().requestToggle(&module);
     }
 
     r.drawLine(area.x, head.bottom() + 6.0f, area.right(), head.bottom() + 6.0f, kHair, 1.0f);
