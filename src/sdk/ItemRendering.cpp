@@ -227,11 +227,34 @@ void ItemRendering::drawPending(void* uiRenderContext) {
         disableAfterFault("MinecraftUIRenderContext::clientInstance/screenContext/ClientInstance::minecraftGame");
         return;
     }
-    LOG_ONCE("item draw context: cinst {:#x}, screenContext {:#x}",
+    LOG_ONCE("item draw context: cinst {:#x}, screenContext {:#x}, mcGame {:#x}",
              reinterpret_cast<std::uintptr_t>(clientInstance),
-             reinterpret_cast<std::uintptr_t>(screenContext));
+             reinterpret_cast<std::uintptr_t>(screenContext),
+             reinterpret_cast<std::uintptr_t>(minecraftGame));
     if (!clientInstance || !screenContext) return;
     if (!minecraftGame) return;
+
+    // Cross-check against the ClientInstance reached by the global walk. These
+    // are two completely independent routes to the same object, so a mismatch
+    // means an offset in this path is wrong — and reaching the constructor with
+    // a wrong ClientInstance crashes the game rather than drawing badly.
+    //
+    // This check exists because that is exactly what happened: the members were
+    // read at 0x00/0x08, which returned the vtable pointer and the real
+    // ClientInstance respectively. Both looked like plausible pointers in the
+    // log, so nothing caught it for three test builds. A pointer being
+    // non-null is not evidence that it is the right pointer.
+    void* known = static_cast<void*>(sdk.clientInstance());
+    if (known && known != clientInstance) {
+        LOG_ERROR("item icons disabled: MinecraftUIRenderContext gave ClientInstance {:#x} "
+                  "but the object graph says {:#x}. One of the "
+                  "MinecraftUIRenderContext offsets is wrong for this build; calling the "
+                  "render-context constructor with this would crash the game.",
+                  reinterpret_cast<std::uintptr_t>(clientInstance),
+                  reinterpret_cast<std::uintptr_t>(known));
+        m_available = false;
+        return;
+    }
 
     const float frac = sdk.guiScaleFrac();
     if (frac <= 0.0f) return;   // no usable GUI scale — see GameSDK::guiScaleFrac

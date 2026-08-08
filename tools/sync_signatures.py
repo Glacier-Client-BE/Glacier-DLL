@@ -228,11 +228,19 @@ OFFSETS: list[OffsetEntry] = [
                 comment="Inventory::getItem(int) vtable index — the game bounds-checks for us"),
 
     # ── Item rendering (Phase 7) ──
-    OffsetEntry("MinecraftUIRenderContext::clientInstance", "", "", literal=0x00,
+    OffsetEntry("MinecraftUIRenderContext::clientInstance", "", "", literal=0x08,
                 comment="Plain members in Latite's MinecraftUIRenderContext.h, not CLASS_FIELD:\n"
-                        "//   class ClientInstance* cinst;  ScreenContext* screenContext;",
+                        "//   class ClientInstance* cinst;  ScreenContext* screenContext;\n"
+                        "// They are declared FIRST in the header but do NOT start at 0. The\n"
+                        "// class declares virtual functions further down, so MSVC puts the\n"
+                        "// vtable pointer at 0x00 and the members follow it — declaration\n"
+                        "// order in the source is not layout order when a vptr exists.\n"
+                        "// Reading these at 0x00/0x08 handed the item renderer a vtable\n"
+                        "// pointer as its ClientInstance, which then produced a garbage\n"
+                        "// MinecraftGame and crashed the game inside the render-context\n"
+                        "// constructor. Flarial lists the same 0x8/0x10 independently.",
                 blank_before=True),
-    OffsetEntry("MinecraftUIRenderContext::screenContext", "", "", literal=0x08),
+    OffsetEntry("MinecraftUIRenderContext::screenContext", "", "", literal=0x10),
     OffsetEntry("GuiData::guiScale",
                 "src/mc/common/client/gui/GuiData.h", "guiScale",
                 comment="Screen pixels per GUI unit"),
@@ -244,11 +252,14 @@ OFFSETS: list[OffsetEntry] = [
                 "src/mc/common/client/gui/GuiData.h", "screenSize"),
     OffsetEntry("BaseActorRenderContext::itemRenderer",
                 "src/mc/common/client/renderer/game/BaseActorRenderContext.h", "itemRenderer"),
-    OffsetEntry("BaseActorRenderContext::size", "", "", literal=0x500,
-                comment="Upstream declares `char pad[0x500]` with a \"TODO: check actual\n"
-                        "// size\" — so this is an upper bound, not a measured size. We only\n"
-                        "// ever zero and stack-allocate this many bytes, and over-reserving\n"
-                        "// is the safe direction to be wrong in."),
+    OffsetEntry("BaseActorRenderContext::size", "", "", literal=0x1000,
+                comment="Latite declares `char pad[0x500]` with a \"TODO: check actual\n"
+                        "// size\" — its own admission the number was never measured. Flarial\n"
+                        "// and Lyra independently pad the same type to 0x1000 (`char\n"
+                        "// filling[4096]`), specifically so the constructor's writes cannot\n"
+                        "// run past what the caller reserved. Trust the larger, better-\n"
+                        "// attested figure: over-reserving costs stack space, under-\n"
+                        "// reserving lets the game corrupt memory past our buffer."),
     OffsetEntry("Item::getMaxDamageVIndex", "", "", literal=0x24,
                 comment="Item::getMaxDamage() vtable index — 0 for anything not damageable"),
 

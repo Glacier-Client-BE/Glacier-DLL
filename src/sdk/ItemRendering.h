@@ -65,25 +65,24 @@ public:
         return instance;
     }
 
-    // Off by default, overridable with `itemIcons = true` under [Glacier] in
+    // On by default, overridable with `itemIcons = false` under [Glacier] in
     // config.ini.
     //
-    // Confirmed unstable on 1.26.40.5: constructing BaseActorRenderContext
-    // faults identically across three independent test builds, including one
-    // with the padding buffer widened from 0x800 to 0x1000 (matching Flarial,
-    // Lyra, and every other reference client's own padding) — the crash's
-    // faulting address didn't move, which rules out a buffer-size cause and
-    // points at the `BaseActorRenderContext::BaseActorRenderContext` pattern
-    // itself resolving to the wrong address for this build. SEH around the
-    // call does not save it: a call through a wrong function pointer can
-    // execute arbitrary garbage before it faults, and if that garbage
-    // corrupts a stack cookie the CRT terminates the process via __fastfail
-    // before structured exception dispatch ever runs — which is consistent
-    // with disableAfterFault() never getting to log. Re-deriving the pattern
-    // needs a live disassembler session against a running 1.26.40.5, which is
-    // out of reach here; until then this stays off so a fresh install doesn't
-    // crash on world load. HUD widgets that want icons should fall back to
-    // JSON UI render controllers (see the pack's own ArmorHUD) instead.
+    // This crashed the game on world load for three builds running. The cause
+    // was NOT the signatures and NOT the context buffer size — it was
+    // MinecraftUIRenderContext::clientInstance/screenContext being read at
+    // 0x00/0x08 when the real members sit at 0x08/0x10. That class declares
+    // its two pointers first in the header but also declares virtual
+    // functions, so MSVC puts the vtable pointer at 0x00 ahead of them. We
+    // were passing a vtable pointer as the ClientInstance, deriving a garbage
+    // MinecraftGame from it, and handing both to the game's render-context
+    // constructor, which dereferenced them and died.
+    //
+    // The giveaway was in the log the whole time: the "cinst" we printed was
+    // in the module image range (i.e. .rdata — a vtable), while the
+    // "screenContext" we printed was byte-identical to the ClientInstance the
+    // SDK had resolved independently through the global walk. See
+    // docs/signatures.md.
     //
     // Must be called before installHooks() to have any effect.
     void setEnabled(bool enabled) { m_enabled = enabled; }
@@ -117,7 +116,7 @@ private:
     // what failed. Called from the render path, so it must not throw.
     void disableAfterFault(const char* what);
 
-    bool m_enabled = false;
+    bool m_enabled = true;
     bool m_available = false;
 
     // Two batches: one being filled by the overlay pass, one ready for the game

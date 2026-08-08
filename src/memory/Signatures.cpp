@@ -146,8 +146,16 @@ void SignatureManager::seedBedrock() {
 
     // Plain members in Latite's MinecraftUIRenderContext.h, not CLASS_FIELD:
     //   class ClientInstance* cinst;  ScreenContext* screenContext;
-    addOffset("MinecraftUIRenderContext::clientInstance", 0x00);
-    addOffset("MinecraftUIRenderContext::screenContext", 0x08);
+    // They are declared FIRST in the header but do NOT start at 0. The
+    // class declares virtual functions further down, so MSVC puts the
+    // vtable pointer at 0x00 and the members follow it — declaration
+    // order in the source is not layout order when a vptr exists.
+    // Reading these at 0x00/0x08 handed the item renderer a vtable
+    // pointer as its ClientInstance, which then produced a garbage
+    // MinecraftGame and crashed the game inside the render-context
+    // constructor. Flarial lists the same 0x8/0x10 independently.
+    addOffset("MinecraftUIRenderContext::clientInstance", 0x08);
+    addOffset("MinecraftUIRenderContext::screenContext", 0x10);
     // Screen pixels per GUI unit
     addOffset("GuiData::guiScale", 0x5C);
     // 1/guiScale. The game keeps both; we read this one because
@@ -155,14 +163,13 @@ void SignatureManager::seedBedrock() {
     addOffset("GuiData::guiScaleFrac", 0x60);
     addOffset("GuiData::screenSize", 0x40);
     addOffset("BaseActorRenderContext::itemRenderer", 0x58);
-    // Latite declares `char pad[0x500]` with a "TODO: check actual size" —
-    // its own admission this was never measured. Flarial pads the same type
-    // to 0x1000 (`char filling[4096]`, with a comment that it exists so the
-    // constructor's writes don't run past what the compiler reserved), which
-    // is the closest thing either reference client has to a verified number.
-    // Trust the larger one: a wrong-but-big pad wastes stack space, a
-    // wrong-but-small one is exactly what let the game's constructor write
-    // past our buffer and take the whole process down.
+    // Latite declares `char pad[0x500]` with a "TODO: check actual
+    // size" — its own admission the number was never measured. Flarial
+    // and Lyra independently pad the same type to 0x1000 (`char
+    // filling[4096]`), specifically so the constructor's writes cannot
+    // run past what the caller reserved. Trust the larger, better-
+    // attested figure: over-reserving costs stack space, under-
+    // reserving lets the game corrupt memory past our buffer.
     addOffset("BaseActorRenderContext::size", 0x1000);
     // Item::getMaxDamage() vtable index — 0 for anything not damageable
     addOffset("Item::getMaxDamageVIndex", 36);

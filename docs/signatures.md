@@ -96,10 +96,10 @@ cleanly and then executes something unrelated, so it is not left to inference.
 | `GuiData::guiScaleFrac` | `0x60` | 1/GUI scale — converts Glacier's pixel layout to the game's GUI units | no | ⚠️ inherited |
 | `GuiData::guiScale` | `0x5C` | Seeded, not yet consumed | no | ⬜ unused |
 | `GuiData::screenSize` | `0x40` | Seeded, not yet consumed | no | ⬜ unused |
-| `MinecraftUIRenderContext::clientInstance` | `0x00` | Read out of the UI pass's context | no | ⚠️ inherited |
-| `MinecraftUIRenderContext::screenContext` | `0x08` | Read out of the UI pass's context | no | ⚠️ inherited |
-| `BaseActorRenderContext::itemRenderer` | `0x58` | → the `ItemRenderer` the icon draw is called on | no | ⚠️ inherited |
-| `BaseActorRenderContext::size` | `0x500` | How much to zero before running the constructor. Upstream marks this an over-estimate, so it is an upper bound rather than a measured size | no | ⚠️ inherited |
+| `MinecraftUIRenderContext::clientInstance` | `0x08` | Read out of the UI pass's context. **Was `0x00` — see below** | yes | ✅ corrected |
+| `MinecraftUIRenderContext::screenContext` | `0x10` | Read out of the UI pass's context. **Was `0x08` — see below** | yes | ✅ corrected |
+| `BaseActorRenderContext::itemRenderer` | `0x58` | → the `ItemRenderer` the icon draw is called on. Horion lays the struct out field-by-field rather than padding blind and independently puts it here | no | ⚠️ inherited |
+| `BaseActorRenderContext::size` | `0x1000` | How much to reserve and zero before running the constructor. Latite says `0x500` but marks it "TODO: check actual size"; Flarial and Lyra independently pad to `0x1000` | no | ⚠️ inherited |
 | `Item::getMaxDamageVIndex` | `36` (`0x24`) | vtable **index** of `Item::getMaxDamage()` — 0 means not damageable | no | ⚠️ inherited |
 | `ClientInstance::options` | `0xD78` | Seeded, not yet consumed | no | ⬜ unused |
 | `Actor::entityContext` | `0x08` | Embedded `EntityContext` — the route into the entt registry, used for armor | no | ⚠️ inherited |
@@ -203,6 +203,59 @@ they surface *rendering* state — which texture, which damage tier — rather t
 the `ItemStack` the HUD wants for counts and durability. Worth revisiting if the
 entt pin becomes a maintenance problem, or for drawing real armor icons, which
 the component route cannot do.
+
+## The vptr trap — read this before importing any offset from a header
+
+`MinecraftUIRenderContext::clientInstance` was seeded as `0x00` and
+`screenContext` as `0x08`, straight from the declaration order in Latite's
+`MinecraftUIRenderContext.h`:
+
+```cpp
+class MinecraftUIRenderContext {
+public:
+    class ClientInstance* cinst;      // looks like 0x00
+    ScreenContext* screenContext;     // looks like 0x08
+    // ...
+    virtual ~MinecraftUIRenderContext() = 0;   // but the class IS polymorphic
+```
+
+**Declaration order is not layout order when a class has virtual functions.**
+MSVC puts the vtable pointer at offset `0x00` no matter where the virtuals
+appear in the body, so the real layout is `0x00` vptr, `0x08` cinst, `0x10`
+screenContext. Flarial lists exactly `0x8`/`0x10`; the two sources agree once
+the vptr is accounted for.
+
+The consequence was not a cosmetic bug. Glacier passed a **vtable pointer** as
+the `ClientInstance`, read `ClientInstance::minecraftGame` from `.rdata` at
+`vptr + 0x1A0`, and handed both to the game's render-context constructor, which
+dereferenced them and killed the process on world load.
+
+Three things made this expensive to find, and each is worth remembering:
+
+1. **Both wrong values looked right.** A vtable pointer is a valid, non-null,
+   plausible-looking pointer. Null checks passed. The log printed both and
+   nothing looked wrong.
+2. **The evidence was in the log from the first crash.** The printed `cinst`
+   was in the module image range (`0x7ff7...`, i.e. `.rdata`) while the printed
+   `screenContext` was byte-identical to the ClientInstance the SDK had already
+   resolved through the *unrelated* global walk. Two independent routes
+   disagreeing is proof; it just was not being compared.
+3. **SEH did not catch it, so it read as a bad signature.** The fault surfaced
+   inside the constructor, which pointed suspicion at
+   `BaseActorRenderContext::BaseActorRenderContext` — the most recently added,
+   least trusted signature — rather than at an offset that had been sitting
+   there quietly. Two builds were spent on the wrong suspect.
+
+`ItemRendering::drawPending` now cross-checks the context's ClientInstance
+against the object graph's and disables itself on a mismatch, so this specific
+class of error reports itself instead of crashing the game.
+
+**The general rule:** when importing a struct offset from any reference
+client's header, check whether the class declares virtual functions anywhere in
+its body. If it does, every plain data member is shifted 8 bytes from where
+source order suggests. Prefer headers that state offsets explicitly (Horion's
+`BaseActorRenderContext` numbers each field; Latite's `CLASS_FIELD` macro
+carries the offset) over ones that rely on declaration order.
 
 ## When these stop working
 
