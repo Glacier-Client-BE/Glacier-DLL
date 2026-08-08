@@ -92,6 +92,23 @@ bool drawBatchGuarded(void* itemRenderer, void* context,
             }
             if (!stack) continue;
 
+            // The HUD decided this slot was worth drawing a whole frame ago
+            // (see the class comment on the one-frame lag), using ItemStack's
+            // decoded `valid` — which is false for an empty slot even though
+            // its ItemStack* is never null. Re-check the same field
+            // (ItemStack::item) against the FRESH pointer just resolved
+            // above: a slot that held an item last frame can be air now,
+            // especially on the hotbar, which churns far more than armor.
+            // renderGuiItemNew has no null check of its own for an empty
+            // stack's item pointer — this is what turned "Hotbar HUD, scroll
+            // through an empty slot" into a crash the first time this ran
+            // in-game.
+            if (!*reinterpret_cast<void**>(
+                    reinterpret_cast<std::uintptr_t>(stack)
+                    + SignatureManager::get().offset("ItemStack::item"))) {
+                continue;
+            }
+
             // Glacier lays HUDs out in swapchain pixels; the game's UI renderer
             // works in GUI units. One multiply bridges them.
             const float x = draw.x * frac;
